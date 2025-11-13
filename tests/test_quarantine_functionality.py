@@ -1,10 +1,10 @@
 import unittest
 
-from falcon2.quarantine import Quarantine
+from condorgame.quarantine import Quarantine
 
 
 
-class TestQuarantine:
+class TestQuarantine(unittest.TestCase):
 
     def test_add_to_quarantine_orders_correctly(self):
         q = Quarantine()

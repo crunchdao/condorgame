@@ -1,6 +1,6 @@
 import abc
 
-from falcon2.prices import PriceStore, Asset, PriceEntry, PriceData
+from condorgame.prices import PriceStore, Asset, PriceEntry, PriceData
 
 
 class TrackerBase(abc.ABC):
@@ -14,7 +14,7 @@ class TrackerBase(abc.ABC):
 
         data = {
             "BTC": [(ts1, p1), (ts2, p2)],
-            "ETH": [(ts1, p1)],
+            "SOL": [(ts1, p1)],
         }
         """
         self.prices.add_bulk(data)
@@ -22,10 +22,10 @@ class TrackerBase(abc.ABC):
     @abc.abstractmethod
     def predict(self, asset: Asset, horizon: int, step: int):
         """
-        Generate a sequence of price density predictions for a given asset.
+        Generate a sequence of log-return price density predictions for a given asset.
 
         This method produces a list of predictive distributions (densities)
-        for the future price of a given asset (e.g., BTC, ETH, SOL, etc.)
+        for the future log-return price of a given asset (e.g., BTC, SOL, etc.)
         starting from the current timestamp.
 
         Each distribution corresponds to a prediction at a specific time offset,
@@ -37,20 +37,20 @@ class TrackerBase(abc.ABC):
             >>> model.predict(asset="BTC", horizon=86400, step=300)
             [
                 {
-                    "step": 300,
+                    "step": (k+1)*step,
                     "prediction": {
                         "type": "builtin",
                         "name": "norm",
-                        "params": {"loc": 38200.5, "scale": 45.3}
+                        "params": {"loc": 0.0, "scale": 0.1}
                     }
-                },
-                ...
+                }
+                for k in range(0, horizon // step)
             ]
 
-        :param asset: Asset symbol to predict (e.g. "BTC", "ETH", "SOL").
+        :param asset: Asset symbol to predict (e.g. "BTC", "SOL").
         :param horizon: Total prediction horizon in seconds (e.g. 86400 for 24h ahead).
         :param step: Interval between each prediction in seconds (e.g. 300 for 5 minutes).
         :return: List of predictive density objects, each representing a probability
-                 distribution for the price at a given time step.
+                 distribution for the log-return price at a given time step.
         """
         pass

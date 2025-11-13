@@ -257,3 +257,5 @@ cython_debug/
 *.code-workspace
 
 # End of https://www.toptal.com/developers/gitignore/api/python,eclipse,visualstudiocode,dotenv
+
+falcon2/examples/results/*

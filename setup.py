@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
+# !/usr/bin/env python3
 
 import os
 from setuptools import setup, find_packages
 
-package = "falcon2"
+package = "condorgame"
 
 about = {}
 here = os.path.abspath(os.path.dirname(__file__))
@@ -25,7 +25,7 @@ setup(
     long_description=readme,
     long_description_content_type='text/markdown',
     version=about['__version__'],
-    author=about['__author__'],
+    author=", ".join(about["__author__"]),
     author_email=about['__author_email__'],
     url=about['__url__'],
     packages=find_packages(),
@@ -42,6 +42,7 @@ setup(
     keywords=[
         'crunchdao',
         'crunch',
-        'falcon',
+        'condor',
+        'condor-game',
     ],
 )
