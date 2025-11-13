@@ -1,0 +1,7 @@
+pandas
+requests
+numpy
+densitypdf
+
+# required only for debugging
+plotly
