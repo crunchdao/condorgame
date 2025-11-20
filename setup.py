@@ -28,7 +28,9 @@ setup(
     author=", ".join(about["__author__"]),
     author_email=about['__author_email__'],
     url=about['__url__'],
-    packages=find_packages(),
+    packages=find_packages(
+        include=[package],
+    ),
     python_requires=">=3.12",
     install_requires=requirements,
     extras_require={
