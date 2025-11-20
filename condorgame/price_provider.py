@@ -1,9 +1,6 @@
-import logging
 from datetime import datetime
 
 import requests
-
-logger = logging.getLogger()
 
 
 class PriceUnavailableError(ValueError):
