@@ -29,7 +29,7 @@ setup(
     author_email=about['__author_email__'],
     url=about['__url__'],
     packages=find_packages(
-        include=[package],
+        exclude=["tests"],
     ),
     python_requires=">=3.12",
     install_requires=requirements,
