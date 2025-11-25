@@ -139,14 +139,38 @@ def plot_tracker_comparison(df_all, asset=None):
         else:
             df_plot = df_plot[df_plot["asset"].isin(asset)]
 
+    # Check Trackers isn't missing assets
+    eval_assets = set(df_plot["asset"].unique().tolist())
+
+    # --- 1) Identify per-tracker asset sets ---
+    tracker_assets = (
+        df_plot.groupby("tracker")["asset"]
+        .unique()
+        .apply(set)
+        .to_dict()
+    )
+
+    # --- 2) Warn if any tracker is missing assets ---
+    tracker_to_remove = []
+    for t, assets in tracker_assets.items():
+        missing = eval_assets - assets
+        if missing:
+            print(f"⚠️ WARNING: Tracker '{t}' is missing assets: {sorted(missing)}")
+            print(f"   It will be evaluated only on: {sorted(eval_assets)}")
+            tracker_to_remove.append(t)
+
+    # --- 3) Filter to eval assets ---
+    df_plot = df_plot[~df_plot["tracker"].isin(tracker_to_remove)]
+
+    # Average Score
     df_plot = df_plot.groupby(["time", "tracker"])["score"].mean().reset_index()
 
     # ---- Compute stats per tracker ----
     tracker_means = df_plot.groupby("tracker")["score"].mean()
 
-    # Count best-times: each timestamp → who had highest score
+    # Count best-times: each timestamp → who had lowest score
     best_counts = (
-        df_plot.loc[df_plot.groupby("time")["score"].idxmax()]
+        df_plot.loc[df_plot.groupby("time")["score"].idxmin()]
         .groupby("tracker")
         .size()
     )
@@ -169,7 +193,7 @@ def plot_tracker_comparison(df_all, asset=None):
         x="time",
         y="score",
         color="tracker",
-        title=f"Tracker Comparison {asset} — Likelihood Over Time",
+        title=f"Tracker Comparison {asset} — CRPS Over Time",
     )
 
     fig.update_traces(mode="lines+markers")

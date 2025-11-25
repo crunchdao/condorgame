@@ -4,16 +4,12 @@ import os
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 
-from densitypdf import density_pdf
+from properscoring import crps_ensemble
 
 from condorgame.prices import Asset
 from condorgame.quarantine import Quarantine, QuarantineGroup
 from condorgame.tracker import TrackerBase, PriceData
-
-
-# def robust_mean_log_like(scores):
-#     log_scores = np.log(1e-10 + np.array(scores))
-#     return np.mean(log_scores)
+from condorgame.debug.densitytosimulations import simulate_paths
 
 
 class TrackerEvaluator:
@@ -59,28 +55,53 @@ class TrackerEvaluator:
         if not quarantines_predictions:
             return
 
-        densities = []
+        crps_scores = []
 
         for quar_ts, quar_predictions, quar_step in quarantines_predictions:
 
-            for density_prediction in quar_predictions[::-1]:
-                current_price_data = self.tracker.prices.get_closest_price(asset, quar_ts)
-                previous_price_data = self.tracker.prices.get_closest_price(asset, quar_ts - quar_step)
+            # Simulate paths (Monte Carlo) for cumulative returns
+            simulations = simulate_paths(
+                    quar_predictions,
+                    start_point=0.0,
+                    num_paths=1000,
+                    step_minutes=None,
+                    start_time=None,
+                    mode="incremental"
+                )
+            paths = simulations["paths"] # shape: (num_paths, num_steps + 1)
 
+            ts_rolling = quar_ts - quar_step * (len(quar_predictions)-1)
+
+            # Collect observed cumulative returns
+            cum_returns_obs = []
+            cumR = 0.0 # cumulative return
+            for i in range(len(quar_predictions)):
+
+                current_price_data  = self.tracker.prices.get_closest_price(asset, ts_rolling)
+                previous_price_data = self.tracker.prices.get_closest_price(asset, ts_rolling - quar_step)
+
+                ts_rolling += quar_step
                 if not current_price_data or not previous_price_data:
-                    continue 
+                    continue
 
                 ts_current, price_current = current_price_data
                 ts_prev, price_prev = previous_price_data
 
                 if ts_current != ts_prev:
-                    delta_price = np.log(price_current) - np.log(price_prev)
-                    pdf_value = density_pdf(density_dict=density_prediction, x=delta_price)
-                    densities.append(pdf_value)
+                    delta_price = price_current - price_prev
+                    cumR += delta_price
+                    cum_returns_obs.append(cumR)
 
-                quar_ts -= quar_step
+            cum_returns_obs = np.array(cum_returns_obs)  # shape: (num_steps,)
+            ensembles = paths[:, 1:len(cum_returns_obs)+1]  # trim to match obs
 
-        score = np.mean(densities)
+            # Vectorized CRPS: compute for all steps at once
+            crps_raw = crps_ensemble(cum_returns_obs, ensembles.T)
+            # normalize by asset volatility
+            crps_norm = crps_raw / np.std(cum_returns_obs)
+            crps_scores += crps_norm.tolist()
+
+        score = np.mean(crps_scores)
         
         # Store timestamped scores
         self.scores[asset].append((ts, score))
@@ -88,27 +109,27 @@ class TrackerEvaluator:
 
         return quarantines_predictions
     
-    def recent_likelihood_score_asset(self, asset: Asset):
+    def recent_crps_score_asset(self, asset: Asset):
         """
-        Return the mean likelihood score of the most recent `score_window_size` scores.
+        Return the mean crps score of the most recent `score_window_size` scores.
         """
         if not self.latest_scores[asset]:
             return 0.0
         values = [s for _, s in self.latest_scores[asset]]
         return float(np.mean(values))
     
-    def overall_likelihood_score_asset(self, asset: Asset):
+    def overall_crps_score_asset(self, asset: Asset):
         """
-        Return the mean likelihood score over all recorded scores.
+        Return the mean crps score over all recorded scores.
         """
         if not self.scores[asset]:
             return 0.0
         values = [s for _, s in self.scores[asset]]
         return float(np.mean(values))
 
-    def overall_likelihood_score(self):
+    def overall_crps_score(self):
         """
-        Return the mean likelihood score across all assets together.
+        Return the mean crps score across all assets together.
         """
         all_scores = []
 
@@ -122,7 +143,7 @@ class TrackerEvaluator:
 
     
     def to_json(self, horizon: int, step: int, interval: int, base_dir="results"):
-        """Save likelihood scores and metadata to a JSON file."""
+        """Save crps scores and metadata to a JSON file."""
         tracker_name = self.tracker.__class__.__name__
 
         scores_json = {
