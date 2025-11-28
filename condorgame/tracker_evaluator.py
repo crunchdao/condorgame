@@ -59,6 +59,28 @@ class TrackerEvaluator:
 
         for quar_ts, quar_predictions, quar_step in quarantines_predictions:
 
+            # start_ts = quar_ts - quar_step * (2*len(quar_predictions))
+            # start_point = self.tracker.prices.get_closest_price(asset, start_ts)[1]
+
+            # # Simulate paths (Monte Carlo) for cumulative returns
+            # simulations = simulate_paths(
+            #         quar_predictions,
+            #         start_point=start_ts,
+            #         num_paths=1000,
+            #         step_minutes=None,
+            #         start_time=None,
+            #         # mode="incremental"
+            #         mode="point"
+            #     )
+            # paths = simulations["paths"] # shape: (num_paths, num_steps + 1)
+            # paths = np.sort(paths, axis=0)
+
+            # ts_rolling = quar_ts - quar_step * (len(quar_predictions)-1)
+
+            # # Collect observed cumulative returns
+            # cum_returns_obs = []
+            # cumR = start_point #0.0
+
             # Simulate paths (Monte Carlo) for cumulative returns
             simulations = simulate_paths(
                     quar_predictions,

@@ -206,6 +206,8 @@ def simulate_paths(
         elif mode == "direct":
             # The mixture draws represent the next absolute value directly
             next_values = draws
+        elif mode == "point":
+            next_values = draws
         else:
             raise ValueError(f"Unknown mode '{mode}'. Use 'absolute', 'incremental', or 'relative'.")
 
@@ -286,9 +288,11 @@ if __name__ == "__main__":
     start_point = 100_000
     dict_mode = {
         "absolute": {"loc": start_point},
+        "direct": {"loc": start_point},
+        "point": {"loc": start_point},
         "incremental": {"loc": 0.0},
     }
-    MODE = "incremental"
+    MODE = "absolute"
 
     # --- 12 mixture specs, each slightly different
     mixture_specs = []
@@ -300,7 +304,7 @@ if __name__ == "__main__":
                     "density": {
                         "type": "scipy",
                         "name": "norm",
-                        "params": {"loc": dict_mode[MODE]["loc"], "scale": 5}
+                        "params": {"loc": dict_mode[MODE]["loc"], "scale": 150}
                     },
                     "weight": 1.0
                 },
@@ -322,6 +326,88 @@ if __name__ == "__main__":
             # }
             ]
         })
+
+    start_point = 100_000
+    [   {'step': 300,
+        'type': 'mixture',
+        'components': [{'density': {'type': 'builtin',
+            'name': 'norm',
+            'params': {'loc': -5, 'scale': 154}},
+            'weight': 1.0}]},
+        {'step': 600,
+        'type': 'mixture',
+        'components': [{'density': {'type': 'builtin',
+            'name': 'norm',
+            'params': {'loc': -4, 'scale': 160}},
+            'weight': 1}]}
+    ]
+
+    # 0    A1=-5+154*np.randn(n)     A2=(A1 + -4+160*np.randn(n))
+
+    start_point = 100_000
+    [   {'step': 300,
+        'type': 'mixture',
+        'components': [{'density': {'type': 'builtin',
+            'name': 'norm',
+            'params': {'loc': 100_005, 'scale': 154}},
+            'weight': 1.0}]},
+        {'step': 600,
+        'type': 'mixture',
+        'components': [{'density': {'type': 'builtin',
+            'name': 'norm',
+            'params': {'loc': 100_010, 'scale': np.sqrt(154**2 + 160**2)}},
+            'weight': 1}]}
+    ]
+
+    # 0      A1=(-5+154*np.randn(n))                -10+np.sqrt(2*154**2)*np.randn(n) 
+    # loc + scale * normal(1000)
+
+    start_point = 100_000
+    mixture_specs = [   {'step': 300,
+        'type': 'mixture',
+        'components': [{'density': {'type': 'builtin',
+            'name': 'norm',
+            'params': {'loc': -5, 'scale': 154}},
+            'weight': 1.0}]},
+        {'step': 600,
+        'type': 'mixture',
+        'components': [{'density': {'type': 'builtin',
+            'name': 'norm',
+            'params': {'loc': -4, 'scale': 160}},
+            'weight': 1}]}
+    ]
+    MODE = "incremental"
+    mixture_specs = [   {'step': 300,
+        'type': 'mixture',
+        'components': [{'density': {'type': 'builtin',
+            'name': 'norm',
+            'params': {'loc': start_point-5, 'scale': 154}},
+            'weight': 1.0}]},
+        {'step': 600,
+        'type': 'mixture',
+        'components': [{'density': {'type': 'builtin',
+            'name': 'norm',
+            'params': {'loc': start_point-9, 'scale': np.sqrt(154**2 + 160**2)}},
+            'weight': 1}]}
+    ]
+
+    MODE = "point"
+    mixture_specs = []
+    for i in range(12):
+        mixture_specs.append({
+            "type": "mixture",
+            "components": [
+                {
+                    "density": {
+                        "type": "scipy",
+                        "name": "norm",
+                        "params": {"loc": dict_mode[MODE]["loc"], "scale": np.sqrt((i+1)*(154**2))}
+                    },
+                    "weight": 1.0
+                },
+            ]
+        })
+    
 
     # --- Simulate multiple paths starting at 0.0
     result = simulate_paths(
@@ -346,14 +432,26 @@ if __name__ == "__main__":
 
     # Optional plot
     import matplotlib.pyplot as plt
-    for p in paths:
-        plt.plot(times, p, color="gray", alpha=0.05, linewidth=0.7)
+    if MODE != "point":
+        for p in paths:
+            plt.plot(times, p, color="gray", alpha=0.05, linewidth=0.7)
+    else:
+        num_paths, num_steps = paths.shape
+        for j in range(num_steps):
+            # Scatter all simulated points for step j
+            plt.scatter(
+                np.full(num_paths, times[j]),
+                paths[:, j],
+                s=8,
+                alpha=0.15,
+                color="gray"
+            )
 
     # Mean line
     plt.plot(times, mean_vals, color="blue", label="Mean", linewidth=2)
 
     # Shaded quantile band
-    plt.fill_between(times, q_low_paths, q_high_paths, color="blue", alpha=0.8, label="5–95% range")
+    plt.fill_between(times, q_low_paths, q_high_paths, color="blue", alpha=0.2, label="5–95% range")
 
     plt.title("Simulated 5-minute paths for next 1 hour")
     plt.xlabel("Time")
@@ -361,3 +459,24 @@ if __name__ == "__main__":
     plt.legend()
     plt.tight_layout()
     plt.show()
+
+
+    if MODE == "point":
+        
+        paths = np.sort(paths, axis=0)
+
+        for p in paths:
+            plt.plot(times, p, color="gray", alpha=0.3, linewidth=0.7)
+
+        # Mean line
+        plt.plot(times, mean_vals, color="blue", label="Mean", linewidth=2)
+
+        # Shaded quantile band
+        plt.fill_between(times, q_low_paths, q_high_paths, color="blue", alpha=0.4, label="5–95% range")
+
+        plt.title("Simulated 5-minute paths for next 1 hour")
+        plt.xlabel("Time")
+        plt.ylabel("Value")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
