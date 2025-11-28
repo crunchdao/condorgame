@@ -158,7 +158,7 @@ def plot_tracker_comparison(df_all, asset=None):
         best_val = best_counts.get(tracker, 0)
 
         legend_names[tracker] = (
-            f"{tracker} (mean={mean_val:.1f} | best {best_val} times)"
+            f"{tracker} (mean={mean_val:.3f} | best {best_val} times)"
         )
 
     # ---- Replace tracker column with custom label ----
@@ -169,7 +169,7 @@ def plot_tracker_comparison(df_all, asset=None):
         x="time",
         y="score",
         color="tracker",
-        title=f"Tracker Comparison {asset} — Likelihood Over Time",
+        title=f"Tracker Comparison {asset} — Log-likelihood Over Time",
     )
 
     fig.update_traces(mode="lines+markers")

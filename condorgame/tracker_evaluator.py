@@ -11,11 +11,6 @@ from condorgame.quarantine import Quarantine, QuarantineGroup
 from condorgame.tracker import TrackerBase, PriceData
 
 
-# def robust_mean_log_like(scores):
-#     log_scores = np.log(1e-10 + np.array(scores))
-#     return np.mean(log_scores)
-
-
 class TrackerEvaluator:
     def __init__(self, tracker: TrackerBase, score_window_size: int = 100):
         """
@@ -59,28 +54,24 @@ class TrackerEvaluator:
         if not quarantines_predictions:
             return
 
-        densities = []
+        log_likelihoods = []
 
         for quar_ts, quar_predictions, quar_step in quarantines_predictions:
 
-            for density_prediction in quar_predictions[::-1]:
-                current_price_data = self.tracker.prices.get_closest_price(asset, quar_ts)
-                previous_price_data = self.tracker.prices.get_closest_price(asset, quar_ts - quar_step)
+            ts_rolling = quar_ts - quar_step * (len(quar_predictions)-1)
 
-                if not current_price_data or not previous_price_data:
-                    continue 
+            for density_prediction in quar_predictions:
+                _, current_price = self.tracker.prices.get_closest_price(asset, ts_rolling)
 
-                ts_current, price_current = current_price_data
-                ts_prev, price_prev = previous_price_data
+                if not current_price:
+                    continue
 
-                if ts_current != ts_prev:
-                    delta_price = np.log(price_current) - np.log(price_prev)
-                    pdf_value = density_pdf(density_dict=density_prediction, x=delta_price)
-                    densities.append(pdf_value)
+                pdf_value = density_pdf(density_dict=density_prediction, x=current_price)
+                log_likelihoods.append(np.log(max(pdf_value, 1e-100)))
 
-                quar_ts -= quar_step
+                ts_rolling += quar_step
 
-        score = np.mean(densities)
+        score = np.mean(log_likelihoods)
         
         # Store timestamped scores
         self.scores[asset].append((ts, score))
@@ -90,7 +81,7 @@ class TrackerEvaluator:
     
     def recent_likelihood_score_asset(self, asset: Asset):
         """
-        Return the mean likelihood score of the most recent `score_window_size` scores.
+        Return the mean log-likelihood score of the most recent `score_window_size` scores.
         """
         if not self.latest_scores[asset]:
             return 0.0
@@ -99,7 +90,7 @@ class TrackerEvaluator:
     
     def overall_likelihood_score_asset(self, asset: Asset):
         """
-        Return the mean likelihood score over all recorded scores.
+        Return the mean log-likelihood score over all recorded scores.
         """
         if not self.scores[asset]:
             return 0.0
@@ -108,7 +99,7 @@ class TrackerEvaluator:
 
     def overall_likelihood_score(self):
         """
-        Return the mean likelihood score across all assets together.
+        Return the mean log-likelihood score across all assets together.
         """
         all_scores = []
 
@@ -122,7 +113,7 @@ class TrackerEvaluator:
 
     
     def to_json(self, horizon: int, step: int, interval: int, base_dir="results"):
-        """Save likelihood scores and metadata to a JSON file."""
+        """Save log-likelihood scores and metadata to a JSON file."""
         tracker_name = self.tracker.__class__.__name__
 
         scores_json = {

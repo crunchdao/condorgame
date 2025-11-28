@@ -206,6 +206,9 @@ def simulate_paths(
         elif mode == "direct":
             # The mixture draws represent the next absolute value directly
             next_values = draws
+        elif mode == "point":
+            # same as mode "direct"
+            next_values = draws
         else:
             raise ValueError(f"Unknown mode '{mode}'. Use 'absolute', 'incremental', or 'relative'.")
 
@@ -285,10 +288,11 @@ if __name__ == "__main__":
 
     start_point = 100_000
     dict_mode = {
-        "absolute": {"loc": start_point},
-        "incremental": {"loc": 0.0},
+        "absolute": {"loc": start_point, "cumulative_scale": False},
+        "incremental": {"loc": 0.0, "cumulative_scale": False},
+        "point": {"loc": start_point, "cumulative_scale": True},
     }
-    MODE = "incremental"
+    MODE = "point"
 
     # --- 12 mixture specs, each slightly different
     mixture_specs = []
@@ -300,7 +304,7 @@ if __name__ == "__main__":
                     "density": {
                         "type": "scipy",
                         "name": "norm",
-                        "params": {"loc": dict_mode[MODE]["loc"], "scale": 5}
+                        "params": {"loc": dict_mode[MODE]["loc"], "scale": 150 if not dict_mode[MODE]["cumulative_scale"] else np.sqrt((i+1)*5**2)}
                     },
                     "weight": 1.0
                 },
@@ -308,7 +312,7 @@ if __name__ == "__main__":
             #     "density": {
             #         "type": "builtin",
             #         "name": "t",
-            #         "params": {"df":4, "loc": dict_mode[MODE]["loc"], "scale": 1}
+            #         "params": {"df":4, "loc": dict_mode[MODE]["loc"], "scale": 100 if not dict_mode[MODE]["cumulative_scale"] else np.sqrt((i+1)*5**2)}
             #     },
             #     "weight": 0.5
             # },
@@ -316,7 +320,7 @@ if __name__ == "__main__":
             #     "density": {
             #         "type": "builtin",
             #         "name": "pareto",
-            #         "params": {"b":4, "loc": dict_mode[MODE]["loc"], "scale": 1}
+            #         "params": {"b":4, "loc": dict_mode[MODE]["loc"], "scale": 100 if not dict_mode[MODE]["cumulative_scale"] else np.sqrt((i+1)*5**2)}
             #     },
             #     "weight": 0.5
             # }
@@ -346,14 +350,26 @@ if __name__ == "__main__":
 
     # Optional plot
     import matplotlib.pyplot as plt
-    for p in paths:
-        plt.plot(times, p, color="gray", alpha=0.05, linewidth=0.7)
+    if MODE != "point":
+        for p in paths:
+            plt.plot(times, p, color="gray", alpha=0.05, linewidth=0.7)
+    else:
+        num_paths, num_steps = paths.shape
+        for j in range(num_steps):
+            # Scatter all simulated points for step j
+            plt.scatter(
+                np.full(num_paths, times[j]),
+                paths[:, j],
+                s=8,
+                alpha=0.15,
+                color="gray"
+            )
 
     # Mean line
     plt.plot(times, mean_vals, color="blue", label="Mean", linewidth=2)
 
     # Shaded quantile band
-    plt.fill_between(times, q_low_paths, q_high_paths, color="blue", alpha=0.8, label="5–95% range")
+    plt.fill_between(times, q_low_paths, q_high_paths, color="blue", alpha=0.2, label="5–95% range")
 
     plt.title("Simulated 5-minute paths for next 1 hour")
     plt.xlabel("Time")

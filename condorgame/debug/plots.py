@@ -5,9 +5,9 @@ from condorgame.debug.densitytosimulations import simulate_paths
 from condorgame.prices import PriceStore
 
 
-def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", title=""):
+def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="point", title=""):
     """
-    Plot the predicted price/log-return distribution (quarantine) for a given asset.
+    Plot the predicted price distribution (quarantine) for a given asset.
 
     Parameters
     ----------
@@ -20,9 +20,8 @@ def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", 
         - step (int): time interval in seconds between prediction steps
     prices : PriceStore
         Object that holds historical price data for the asset.
-    mode : str, default "direct"
-        - "direct": predictions are log-returns
-        - otherwise: predictions are in price space
+    mode : str, default "point"
+        - "point": simulated points
     title : str
         Plot title.
     """
@@ -34,14 +33,13 @@ def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", 
         return
 
     # Determine starting price for simulation
-    # If log-returns ("direct") mode, use 0.0 as the starting point
     start_price = prices.get_closest_price(asset, ts - step * len(predictions))[1]
 
     # Simulate multiple paths based on the predictions
     # This creates a Monte Carlo distribution of potential price trajectories   
     simulations = simulate_paths(
         predictions,
-        start_point=0.0 if mode=="direct" else np.log(start_price),
+        start_point=start_price,
         num_paths=10000,
         step_minutes=None,
         start_time=None,
@@ -50,9 +48,9 @@ def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", 
 
     # Create a DataFrame to store simulated mean and confidence intervals
     scales_df = pd.DataFrame({
-        "mean": simulations["mean"] if mode=="direct" else np.exp(simulations["mean"]),
-        "q_low_paths": simulations["q_low_paths"] if mode=="direct" else np.exp(simulations["q_low_paths"]),
-        "q_high_paths": simulations["q_high_paths"] if mode=="direct" else np.exp(simulations["q_high_paths"]),
+        "mean": simulations["mean"],
+        "q_low_paths": simulations["q_low_paths"],
+        "q_high_paths": simulations["q_high_paths"],
     })
 
     # Map timestamps for each prediction step
@@ -61,12 +59,11 @@ def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", 
 
     # Attach the historical price for each timestamp
     scales_df["price"] = [prices.get_closest_price(asset, ts)[1] for ts in scales_df["ts"]]
-    scales_df["log-return"] = np.log(scales_df["price"]).diff().fillna(0.0)
     # print(scales_df)
 
     import plotly.graph_objects as go
 
-    title=f"Predicted {asset} {'log-return price' if mode=="direct" else "price"} distribution at {scales_df["time"].iloc[0]}"
+    title=f"Predicted {asset} price distribution at {scales_df["time"].iloc[0]}"
 
     # Create a filled band between q05 and q95
     fig = go.Figure()
@@ -103,10 +100,10 @@ def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", 
     # Main line for price
     fig.add_trace(go.Scatter(
         x=scales_df["time"],
-        y=scales_df["log-return"] if mode=="direct" else scales_df["price"],
+        y=scales_df["price"],
         mode='lines',
         line=dict(color='blue', width=2),
-        name='Log-return price' if mode=="direct" else "Price"
+        name="Price"
     ))
 
     # Layout
@@ -114,7 +111,7 @@ def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", 
         title=title,
         hovermode='x unified',
         xaxis_title='Time',
-        yaxis_title='Log-return price' if mode=="direct" else "Price",
+        yaxis_title="Price",
     )
 
     fig.show()
