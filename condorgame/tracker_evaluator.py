@@ -9,11 +9,7 @@ from densitypdf import density_pdf
 from condorgame.prices import Asset
 from condorgame.quarantine import Quarantine, QuarantineGroup
 from condorgame.tracker import TrackerBase, PriceData
-
-
-# def robust_mean_log_like(scores):
-#     log_scores = np.log(1e-10 + np.array(scores))
-#     return np.mean(log_scores)
+from condorgame.constants import CRPS_BOUNDS
 
 
 class TrackerEvaluator:
@@ -42,45 +38,33 @@ class TrackerEvaluator:
         self.tracker.tick(data)
 
 
-    def predict(self, asset: Asset, horizon: int, step: int):
+    def predict(self, asset: Asset, horizon: int, step_config: dict):
         """
-        Process a new data point, make a prediction and evaluate it.
+        Request multi-resolution predictions and evaluate them when realized.
         """
-        predictions = self.tracker.predict(asset, horizon, step)
+        predictions = self.tracker.predict_all(asset, horizon, step_config)
         # add check of prediction
-        if len(predictions) != horizon // step:
-            raise ValueError("Prediction length does not match with the expectation")
-
+        for name, step in step_config.items():
+            if step > horizon:
+                continue
+            expected_len = horizon // step
+            if name not in predictions:
+                raise ValueError(f"Missing predictions for {name}")
+            if len(predictions[name]) != expected_len:
+                raise ValueError(
+                    f"Prediction length mismatch for {name}: "
+                    f"{len(predictions[name])} != {expected_len}"
+                )
 
         ts, _ = self.tracker.prices.get_last_price(asset)
-        self.quarantine_group.add(asset, ts, predictions, horizon, step)
+        self.quarantine_group.add(asset, ts, predictions, horizon, step_config)
         quarantines_predictions = self.quarantine_group.pop(asset, ts)
 
         if not quarantines_predictions:
             return
 
-        densities = []
-
-        for quar_ts, quar_predictions, quar_step in quarantines_predictions:
-
-            for density_prediction in quar_predictions[::-1]:
-                current_price_data = self.tracker.prices.get_closest_price(asset, quar_ts)
-                previous_price_data = self.tracker.prices.get_closest_price(asset, quar_ts - quar_step)
-
-                if not current_price_data or not previous_price_data:
-                    continue 
-
-                ts_current, price_current = current_price_data
-                ts_prev, price_prev = previous_price_data
-
-                if ts_current != ts_prev:
-                    delta_price = np.log(price_current) - np.log(price_prev)
-                    pdf_value = density_pdf(density_dict=density_prediction, x=delta_price)
-                    densities.append(pdf_value)
-
-                quar_ts -= quar_step
-
-        score = np.mean(densities)
+        # Score
+        score = self._score_quarantines(asset, quarantines_predictions)
         
         # Store timestamped scores
         self.scores[asset].append((ts, score))
@@ -88,27 +72,95 @@ class TrackerEvaluator:
 
         return quarantines_predictions
     
-    def recent_likelihood_score_asset(self, asset: Asset):
+    def _score_quarantines(self, asset: Asset, quarantines_predictions: list):
+
+        quarantines_scores = []
+
+        # ------------------------------------------------------------------
+        # Iterate over all quarantines
+        # quar_ts             : reference timestamp of the quarantine
+        # quar_predictions    : dict of predictions per step (5m, 1h, 6h, ...)
+        # quar_step_config    : mapping {step_name -> step_seconds}
+        # ------------------------------------------------------------------
+        for quar_ts, quar_predictions, quar_step_config in quarantines_predictions:
+
+            total_score = 0.0
+
+            # --------------------------------------------------------------
+            # Score predictions at each temporal resolution independently
+            # (e.g. 5min, 1hour, 6hour, 24hour)
+            # --------------------------------------------------------------
+            for name, step in quar_step_config.items():
+
+                preds = quar_predictions[name]
+
+                # Get timestamp of the first prediction step
+                ts_rolling = quar_ts - step * (len(preds) - 1)
+
+                scores_step = []
+
+                # Evaluate each forecasted increment for this step
+                for i in range(len(preds)):
+
+                    current_price_data  = self.tracker.prices.get_closest_price(asset, ts_rolling)
+                    previous_price_data = self.tracker.prices.get_closest_price(asset, ts_rolling - step)
+
+                    ts_rolling += step
+
+                    if not current_price_data or not previous_price_data:
+                        continue
+
+                    ts_current, price_current = current_price_data
+                    ts_prev, price_prev = previous_price_data
+
+                    if ts_current != ts_prev:
+                        # Observed price increment over this step
+                        delta = (price_current - price_prev)
+
+                        # Step-dependent scaling coefficient for CRPS bounds
+                        # K adjusts the CRPS integration range to the time resolution of the forecast
+                        # For the base step (and finer), no scaling is applied
+                        K = np.sqrt(step / CRPS_BOUNDS["base_step"]) if step > CRPS_BOUNDS["base_step"] else 1
+
+                        crps_value = crps_integral(
+                            density_dict=preds[i],
+                            x=delta,
+                            t_min=-K * CRPS_BOUNDS["t"][asset],
+                            t_max= K * CRPS_BOUNDS["t"][asset],
+                        )
+                        scores_step.append(crps_value)
+
+                # Accumulate score across all steps of this resolution
+                total_score += np.sum(scores_step)
+
+            # Normalize by asset-specific scale (keep scores comparable across asset)
+            total_score = total_score / CRPS_BOUNDS["t"][asset]
+            quarantines_scores.append(total_score)
+
+        return np.mean(quarantines_scores)
+
+    
+    def recent_crps_score_asset(self, asset: Asset):
         """
-        Return the mean likelihood score of the most recent `score_window_size` scores.
+        Return the mean crps score of the most recent `score_window_size` scores.
         """
         if not self.latest_scores[asset]:
             return 0.0
         values = [s for _, s in self.latest_scores[asset]]
         return float(np.mean(values))
     
-    def overall_likelihood_score_asset(self, asset: Asset):
+    def overall_crps_score_asset(self, asset: Asset):
         """
-        Return the mean likelihood score over all recorded scores.
+        Return the mean crps score over all recorded scores.
         """
         if not self.scores[asset]:
             return 0.0
         values = [s for _, s in self.scores[asset]]
         return float(np.mean(values))
 
-    def overall_likelihood_score(self):
+    def overall_crps_score(self):
         """
-        Return the mean likelihood score across all assets together.
+        Return the mean crps score across all assets together.
         """
         all_scores = []
 
@@ -121,8 +173,8 @@ class TrackerEvaluator:
         return float(np.mean(all_scores))
 
     
-    def to_json(self, horizon: int, step: int, interval: int, base_dir="results"):
-        """Save likelihood scores and metadata to a JSON file."""
+    def to_json(self, horizon: int, step_config: dict, interval: int, base_dir="results"):
+        """Save crps scores and metadata to a JSON file."""
         tracker_name = self.tracker.__class__.__name__
 
         scores_json = {
@@ -141,7 +193,7 @@ class TrackerEvaluator:
                 "end": end_ts,
             },
             "horizon": horizon,
-            "step": step,
+            "step_config": step_config,
             "interval": interval,
             "scores": scores_json,
         }
@@ -152,7 +204,7 @@ class TrackerEvaluator:
 
         directory = os.path.join(base_dir, f"{fmt(start_ts)}_to_{fmt(end_ts)}")
         os.makedirs(directory, exist_ok=True)
-        path = os.path.join(directory, f"{tracker_name}_h{horizon}_s{step}.json")
+        path = os.path.join(directory, f"{tracker_name}_h{horizon}.json")
 
         with open(path, "w") as f:
             json.dump(data, f, indent=4)
@@ -160,3 +212,30 @@ class TrackerEvaluator:
         print(f"[✔] Tracker results saved to {path}")
 
         return directory
+
+
+def crps_integral(density_dict, x, t_min=-4000, t_max=4000, num_points=2000):
+    """
+    CRPS score (Integrated Quadratic Score) using:
+    - single PDF evaluation per grid point
+    - cumulative sum to get CDF
+
+    CRPS quantifies the accuracy of probabilistic forecasts by measuring the squared distance 
+    between the forecast CDF and the observed indicator function.
+    """
+    ts = np.linspace(t_min, t_max, num_points)
+    dt = ts[1] - ts[0]
+
+    # Vectorized PDF computation
+    pdfs = np.array([density_pdf(density_dict, t) for t in ts], dtype=float)
+
+    # Build CDF by cumulative integration
+    cdfs = np.cumsum(pdfs) * dt
+    cdfs = np.clip(cdfs, 0.0, 1.0)
+
+    # Indicator
+    indicators = (ts >= x).astype(float)
+
+    # Integrate squared error
+    integrand = (cdfs - indicators)**2
+    return float(np.trapz(integrand, ts))

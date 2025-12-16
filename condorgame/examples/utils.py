@@ -58,6 +58,18 @@ def load_initial_price_histories_once(assets, pricedb, evaluation_end, days_hist
     return histories
 
 
+def count_evaluations(history_price, horizon, interval):
+    ts_values = [ts for ts, _ in history_price]
+    count = 0
+    prev_ts = ts_values[0]
+    for ts in ts_values[1:]:
+        if ts - prev_ts >= interval:
+            if ts - ts_values[0] >= horizon:
+                count += 1
+            prev_ts = ts
+    return count
+
+
 ##################################################
 # Tracker Comparison
 ##################################################
@@ -92,17 +104,17 @@ def scores_json_to_df(scores_json):
     return df
 
 
-def load_all_results(current_results_directory, horizon=None, step=None):
+def load_all_results(current_results_directory, horizon=None):
     """
-    Load all JSON results files matching *_h{horizon}_s{step}.json
+    Load all JSON results files matching *_h{horizon}.json
     and return a concatenated DataFrame.
-    If horizon or step is None then take all JSON results
+    If horizon is None then take all JSON results
     """
 
-    if horizon is None or step is None:
+    if horizon is None:
         pattern = "*.json"
     else:
-        pattern = f"*h{horizon}_s{step}.json"
+        pattern = f"*h{horizon}.json"
     search_path = os.path.join(current_results_directory, pattern)
 
     # Find matching files
@@ -144,9 +156,9 @@ def plot_tracker_comparison(df_all, asset=None):
     # ---- Compute stats per tracker ----
     tracker_means = df_plot.groupby("tracker")["score"].mean()
 
-    # Count best-times: each timestamp → who had highest score
+    # Count best-times: each timestamp → who had lowest score
     best_counts = (
-        df_plot.loc[df_plot.groupby("time")["score"].idxmax()]
+        df_plot.loc[df_plot.groupby("time")["score"].idxmin()]
         .groupby("tracker")
         .size()
     )
@@ -158,7 +170,7 @@ def plot_tracker_comparison(df_all, asset=None):
         best_val = best_counts.get(tracker, 0)
 
         legend_names[tracker] = (
-            f"{tracker} (mean={mean_val:.1f} | best {best_val} times)"
+            f"{tracker} (mean={mean_val:.3f} | best {best_val} times)"
         )
 
     # ---- Replace tracker column with custom label ----
@@ -169,7 +181,7 @@ def plot_tracker_comparison(df_all, asset=None):
         x="time",
         y="score",
         color="tracker",
-        title=f"Tracker Comparison {asset} — Likelihood Over Time",
+        title=f"Tracker Comparison {asset} — CRPS Over Time",
     )
 
     fig.update_traces(mode="lines+markers")
