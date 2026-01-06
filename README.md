@@ -1,8 +1,10 @@
 # Condor Game
 
-Condor game is a probabilistic forecasting challenge hosted by CrunchDAO at [crunchdao.com](https://crunchdao.com)
+Condor game is a real-time probabilistic forecasting challenge hosted by CrunchDAO at [crunchdao.com](https://crunchdao.com)
 
 The goal is to anticipate how asset prices will evolve by providing not a single forecasted value, but a full probability distribution over the future price change at multiple forecast horizons and steps.
+
+**The current crypto assets to model are Bitcoin (BTC), Ethereum (ETH), Solana (SOL) and Tether Gold (XAU).**
 
 ## Install
 
@@ -41,7 +43,7 @@ Below is a minimal example showing what your tracker might return:
             "name": "norm",
             "params": {
                 "loc": -0.01,       # mean return
-                "scale": 0.4     # standard deviation of return
+                "scale": 0.4        # standard deviation of return
             }
         }
     }
@@ -138,6 +140,21 @@ class GaussianStepTracker(TrackerBase):
         return distributions
 ```
 
+## Prediction Phase
+
+In each prediction round, players must submit **a set of density forecasts.**
+
+A prediction round is defined by **one asset, one forecast horizon** and **one or more step resolutions.**
+- A **24-hour horizon** forecast with **{5-minute, 1-hour, 6-hour, 24-hour}** increments is triggered **hourly** for each asset.
+- A **1-hour horizon** forecast with **{1-minute, 5-minute, 15-minute, 30-minute, 1-hour}** increments is triggered **every 3 minutes** for each asset.
+
+All required forecasts for a prediction round must be generated within **40 seconds.**
+
+## Scoring
+- Once the full horizon has passed, each prediction is scored using a **CRPS scoring function**.
+- A lower **CRPS score** reflects more accurate predictions.
+- Leaderboard ranking is based on a **7-day rolling average** of CRPS scores across **all assets and horizons.**
+
 ## Check your Tracker performance
 
 TrackerEvaluator allows you to track your model's performance over time locally before participating in the live game. It maintains:
@@ -156,8 +173,9 @@ from condorgame.examples.benchmarktracker import GaussianStepTracker  # Your cus
 tracker_evaluator = TrackerEvaluator(GaussianStepTracker())
 # Feed a new price tick for SOL
 tracker_evaluator.tick({"SOL": [(ts, price)]})
-# You will generate predictive densities for SOL over a 24-hour period (86400s) at multiple step resolutions: 5 minutes, 1 hour and 6 hours
-predictions = tracker_evaluator.predict("SOL", horizon=86400, step_config={"5min":300, "1hour":3600, "6hour":21600})
+# You will generate predictive densities for SOL over a 24-hour period (86400s) at multiple step resolutions: 5 minutes, 1 hour, 6 hours and 24 hours
+predictions = tracker_evaluator.predict("SOL", horizon=86400,
+                                        step_config={"5min":300, "1hour":3600, "6hour":21600, "24hour":86400})
 
 print(f"My overall CRPS score: {tracker_evaluator.overall_crps_score("SOL"):.4f}")
 print(f"My recent CRPS score: {tracker_evaluator.recent_crps_score("SOL"):.4f}")

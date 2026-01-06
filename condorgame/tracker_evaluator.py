@@ -177,10 +177,13 @@ class TrackerEvaluator:
         """Save crps scores and metadata to a JSON file."""
         tracker_name = self.tracker.__class__.__name__
 
-        scores_json = {
-            asset: [score for ts, score in records]
-            for asset, records in self.scores.items()
-        }
+        # Serialize scores
+        assets_json = {}
+        for asset, records in self.scores.items():
+            assets_json[asset] = [
+                    {"ts": ts, "score": float(score)}
+                    for ts, score in records
+                ]
 
         start_ts = min(ts for asset in self.scores for ts, _ in self.scores[asset])
         end_ts   = max(ts for asset in self.scores for ts, _ in self.scores[asset])
@@ -195,7 +198,7 @@ class TrackerEvaluator:
             "horizon": horizon,
             "step_config": step_config,
             "interval": interval,
-            "scores": scores_json,
+            "asset_scores": assets_json,
         }
         
         # Format directory name: "results/2025-02-05T12-00-00_to_2025-02-12T12-00-00/"

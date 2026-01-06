@@ -4,6 +4,15 @@ from condorgame.prices import PriceStore, Asset, PriceEntry, PriceData
 
 
 class TrackerBase(abc.ABC):
+    """
+    Base class for all trackers.
+
+    You must implement `predict()` for a *single*
+    (asset, horizon, step) configuration.
+
+    The framework will automatically call `predict()` multiple times
+    via `predict_all()` to obtain multi-resolution forecasts.
+    """
     def __init__(self):
         self.prices = PriceStore()
 
