@@ -47,14 +47,13 @@ class TrackerEvaluator:
         for step in steps:
             if step > horizon:
                 continue
-            name = str(step)
             expected_len = horizon // step
-            if name not in predictions:
-                raise ValueError(f"Missing predictions for step {name}")
-            if len(predictions[name]) != expected_len:
+            if step not in predictions:
+                raise ValueError(f"Missing predictions for step {step}")
+            if len(predictions[step]) != expected_len:
                 raise ValueError(
-                    f"Prediction length mismatch for step {name}: "
-                    f"{len(predictions[name])} != {expected_len}"
+                    f"Prediction length mismatch for step {step}: "
+                    f"{len(predictions[step])} != {expected_len}"
                 )
 
         ts, _ = self.tracker.prices.get_last_price(asset)
@@ -92,9 +91,8 @@ class TrackerEvaluator:
             # (e.g. 5min, 1hour, 6hour, 24hour)
             # --------------------------------------------------------------
             for step in quar_steps:
-                name = str(step)
 
-                preds = quar_predictions[name]
+                preds = quar_predictions[step]
 
                 # Get timestamp of the first prediction step
                 ts_rolling = quar_ts - step * (len(preds) - 1)
