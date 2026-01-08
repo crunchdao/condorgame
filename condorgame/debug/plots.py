@@ -4,10 +4,9 @@ import numpy as np
 from condorgame.debug.densitytosimulations import simulate_paths
 from condorgame.prices import PriceStore
 
-
-def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", title=""):
+def plot_quarantine(asset, quarantine_entry, name_step: str, prices: PriceStore, mode="direct", title="", lookback_seconds=3600):
     """
-    Plot the predicted price/log-return distribution (quarantine) for a given asset.
+    Plot the predicted price/return distribution (quarantine) for a given asset.
 
     Parameters
     ----------
@@ -21,27 +20,33 @@ def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", 
     prices : PriceStore
         Object that holds historical price data for the asset.
     mode : str, default "direct"
-        - "direct": predictions are log-returns
+        - "direct": predictions are returns
         - otherwise: predictions are in price space
     title : str
         Plot title.
     """
 
-    ts, predictions, step = quarantine_entry
+    ts, predictions, step_config = quarantine_entry
+
+    if name_step not in predictions:
+        return
+
+    predictions = predictions[name_step]
+    step = step_config[name_step]
 
     # Skip if the reference timestamp is after the last known price
     if ts > prices.get_last_price(asset)[0]:
         return
 
     # Determine starting price for simulation
-    # If log-returns ("direct") mode, use 0.0 as the starting point
+    # If returns ("direct") mode, use 0.0 as the starting point
     start_price = prices.get_closest_price(asset, ts - step * len(predictions))[1]
 
     # Simulate multiple paths based on the predictions
     # This creates a Monte Carlo distribution of potential price trajectories   
     simulations = simulate_paths(
         predictions,
-        start_point=0.0 if mode=="direct" else np.log(start_price),
+        start_point=0.0 if mode=="direct" else start_price,
         num_paths=10000,
         step_minutes=None,
         start_time=None,
@@ -50,9 +55,9 @@ def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", 
 
     # Create a DataFrame to store simulated mean and confidence intervals
     scales_df = pd.DataFrame({
-        "mean": simulations["mean"] if mode=="direct" else np.exp(simulations["mean"]),
-        "q_low_paths": simulations["q_low_paths"] if mode=="direct" else np.exp(simulations["q_low_paths"]),
-        "q_high_paths": simulations["q_high_paths"] if mode=="direct" else np.exp(simulations["q_high_paths"]),
+        "mean": simulations["mean"],
+        "q_low_paths": simulations["q_low_paths"],
+        "q_high_paths": simulations["q_high_paths"],
     })
 
     # Map timestamps for each prediction step
@@ -61,12 +66,33 @@ def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", 
 
     # Attach the historical price for each timestamp
     scales_df["price"] = [prices.get_closest_price(asset, ts)[1] for ts in scales_df["ts"]]
-    scales_df["log-return"] = np.log(scales_df["price"]).diff().fillna(0.0)
+    scales_df["return"] = scales_df["price"].diff().fillna(0.0)
     # print(scales_df)
+
+    # Build historical price context before forecast
+    forecast_origin_ts = scales_df["ts"].iloc[0]
+
+    hist_ts = []
+    hist_price = []
+
+    t = forecast_origin_ts - lookback_seconds
+    while t < forecast_origin_ts:
+        p = prices.get_closest_price(asset, t)
+        if p:
+            hist_ts.append(p[0])
+            hist_price.append(p[1])
+        t += step
+
+    history_df = pd.DataFrame({
+        "ts": hist_ts + [scales_df["ts"].iloc[0]],
+        "price": hist_price + [scales_df["price"].iloc[0]],
+    })
+    history_df["time"] = pd.to_datetime(history_df["ts"], unit="s", utc=True)
+
 
     import plotly.graph_objects as go
 
-    title=f"Predicted {asset} {'log-return price' if mode=="direct" else "price"} distribution at {scales_df["time"].iloc[0]}"
+    title=f"Predicted {asset} {'return price' if mode=="direct" else "price"} distribution at {scales_df["time"].iloc[0]}"
 
     # Create a filled band between q05 and q95
     fig = go.Figure()
@@ -77,7 +103,7 @@ def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", 
         y=scales_df["q_low_paths"],
         mode='lines',
         line=dict(width=0),
-        name='5th percentile',
+        name=f'{round(simulations["quantile_range"][0]*100)}th percentile',
         showlegend=False
     ))
 
@@ -87,34 +113,70 @@ def plot_quarantine(asset, quarantine_entry, prices: PriceStore, mode="direct", 
         y=scales_df["q_high_paths"],
         mode='lines',
         line=dict(width=0),
-        fill='tonexty',  # <-- fills area between q05 and q95
-        fillcolor='rgba(255,165,0,0.5)',  # translucent blue band
-        name='95% interval'
+        fill='tonexty',
+        fillcolor='rgba(255,165,0,0.3)',
+        name=f"Predicted range ({round(100*(simulations["quantile_range"][1] - simulations["quantile_range"][0]))}%)"
     ))
 
+    # Mean prediction line with shadow effect
     fig.add_trace(go.Scatter(
         x=scales_df["time"],
         y=scales_df["mean"],
         mode='lines',
-        line=dict(color='red', width=2),
-        name='Price mean predicted'
+        line=dict(color='firebrick', width=3),
+        name='Predicted mean'
     ))
 
-    # Main line for price
+    # Actual price / returns line with markers
     fig.add_trace(go.Scatter(
         x=scales_df["time"],
-        y=scales_df["log-return"] if mode=="direct" else scales_df["price"],
-        mode='lines',
-        line=dict(color='blue', width=2),
-        name='Log-return price' if mode=="direct" else "Price"
+        y=scales_df["return"] if mode=="direct" else scales_df["price"],
+        mode='lines',  # 'lines+markers'
+        line=dict(color='royalblue', width=2),
+        marker=dict(size=4, opacity=0.7),
+        name='Observed relative price' if mode=="direct" else "Observed price"
     ))
+
+    if not mode=="direct":
+        # Historical price (pre-forecast context)
+        fig.add_trace(go.Scatter(
+            x=history_df["time"],
+            y=history_df["price"],
+            mode="lines",
+            line=dict(color="grey", width=2),#, dash="dot"),
+            name="Historical price",
+        ))
+
+    if not mode=="direct":
+        fig.add_vline(
+            x=scales_df["time"].iloc[0].timestamp()*1000 - 3600*1000,
+            line_dash="dash",
+            line_color="black",
+            annotation_text="Forecast origin",
+            annotation_position="top"
+        )
+
+        fig.add_vrect(
+            x0=scales_df["time"].iloc[0],
+            x1=scales_df["time"].iloc[-1],
+            fillcolor="rgba(255,165,0,0.05)",
+            layer="below",
+            line_width=0,
+        )
 
     # Layout
     fig.update_layout(
-        title=title,
+        title=dict(
+            text=title,
+            x=0.5,
+            xanchor='center',
+            font=dict(size=20)
+        ),
         hovermode='x unified',
-        xaxis_title='Time',
-        yaxis_title='Log-return price' if mode=="direct" else "Price",
+        xaxis=dict(title='Time', showgrid=True, gridcolor='lightgrey'),
+        yaxis=dict(title='Return' if mode=="direct" else 'Price', showgrid=True, gridcolor='lightgrey'),
+        plot_bgcolor='white',
+        legend=dict(x=1.02, y=1, bordercolor='Black', borderwidth=1)
     )
 
     fig.show()
@@ -178,7 +240,7 @@ def plot_scores(data):
     start_scores = df_avg['time'].iloc[0]
     end_scores = df_avg['time'].iloc[-1]
     assets = df["asset"].unique().tolist()
-    title = f"{assets} likelihood scores from {start_scores} to {end_scores}"
+    title = f"{assets} crps scores from {start_scores} to {end_scores}"
     
     # Create a line graph using Plotly
     fig = px.line(

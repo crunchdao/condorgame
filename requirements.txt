@@ -1,6 +1,7 @@
 pandas
 requests
 numpy
+tqdm
 densitypdf
 
 # required only for debugging

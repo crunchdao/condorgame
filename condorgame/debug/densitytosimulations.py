@@ -206,6 +206,8 @@ def simulate_paths(
         elif mode == "direct":
             # The mixture draws represent the next absolute value directly
             next_values = draws
+        elif mode == "point":
+            next_values = draws
         else:
             raise ValueError(f"Unknown mode '{mode}'. Use 'absolute', 'incremental', or 'relative'.")
 
@@ -224,7 +226,7 @@ def simulate_paths(
     q_low = np.quantile(paths, quantile_range[0], axis=0)
     q_high = np.quantile(paths, quantile_range[1], axis=0)
 
-    return {"times": times, "paths": paths, "mean": mean_path, "q_low_paths": q_low, "q_high_paths": q_high}
+    return {"times": times, "paths": paths, "mean": mean_path, "q_low_paths": q_low, "q_high_paths": q_high, "quantile_range": quantile_range}
 
 
 if __name__ == "__main__":
@@ -286,6 +288,8 @@ if __name__ == "__main__":
     start_point = 100_000
     dict_mode = {
         "absolute": {"loc": start_point},
+        "direct": {"loc": start_point},
+        "point": {"loc": start_point},
         "incremental": {"loc": 0.0},
     }
     MODE = "incremental"
@@ -346,14 +350,26 @@ if __name__ == "__main__":
 
     # Optional plot
     import matplotlib.pyplot as plt
-    for p in paths:
-        plt.plot(times, p, color="gray", alpha=0.05, linewidth=0.7)
+    if MODE != "point":
+        for p in paths:
+            plt.plot(times, p, color="gray", alpha=0.2, linewidth=0.7)
+    else:
+        num_paths, num_steps = paths.shape
+        for j in range(num_steps):
+            # Scatter all simulated points for step j
+            plt.scatter(
+                np.full(num_paths, times[j]),
+                paths[:, j],
+                s=8,
+                alpha=0.15,
+                color="gray"
+            )
 
     # Mean line
     plt.plot(times, mean_vals, color="blue", label="Mean", linewidth=2)
 
     # Shaded quantile band
-    plt.fill_between(times, q_low_paths, q_high_paths, color="blue", alpha=0.8, label="5–95% range")
+    plt.fill_between(times, q_low_paths, q_high_paths, color="blue", alpha=0.2, label="5–95% range")
 
     plt.title("Simulated 5-minute paths for next 1 hour")
     plt.xlabel("Time")

@@ -4,6 +4,7 @@ import glob
 import json
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
 def load_test_prices_once(assets, pricedb, evaluation_end, days=30):
     """
@@ -58,6 +59,117 @@ def load_initial_price_histories_once(assets, pricedb, evaluation_end, days_hist
     return histories
 
 
+def visualize_price_data(
+    history_data: dict,
+    test_data: dict,
+    selected_assets: list | None = None,
+    show_graph: bool = True,
+) -> pd.DataFrame:
+    """ Visualize historical and test price data side by side for each asset. """
+    rows = []
+
+    def append_rows(data: dict, split: str):
+        for asset, records in data.items():
+            if selected_assets is not None and asset not in selected_assets:
+                continue
+            for ts, price in records:
+                rows.append({
+                    "asset": asset,
+                    "ts": int(ts),
+                    "price": float(price),
+                    "split": split,
+                })
+
+    append_rows(history_data, split="history")
+    append_rows(test_data, split="test")
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    df["time"] = pd.to_datetime(df["ts"], unit="s", utc=True)
+
+    if show_graph:
+        print("Dataset:")
+        for asset, g in df.groupby("asset", sort=False):
+            g = g.sort_values("time")
+
+            g_hist = g[g["split"] == "history"]
+            g_test = g[g["split"] == "test"]
+
+            fig = go.Figure()
+
+            # --- History ---
+            if not g_hist.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=g_hist["time"],
+                        y=g_hist["price"],
+                        mode="lines",
+                        line=dict(color="rgba(120,120,120,0.8)", width=2),
+                        name="History",
+                    )
+                )
+
+            # --- Test ---
+            if not g_test.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=g_test["time"],
+                        y=g_test["price"],
+                        mode="lines",
+                        line=dict(color="#1f77b4", width=2),
+                        name="Test",
+                    )
+                )
+
+                # Vertical separator at test start
+                test_start_time = g_test["time"].iloc[0].timestamp()*1000 - 3600*1000
+                fig.add_vline(
+                    x=test_start_time,
+                    line_dash="dash",
+                    line_color="black",
+                    annotation_text="Test start",
+                    annotation_position="top left",
+                )
+
+            fig.update_layout(
+                title=dict(
+                    text=f"{asset} — History & Test Prices",
+                    x=0.5,
+                    xanchor="center",
+                    font=dict(size=18),
+                ),
+                xaxis_title="Time (UTC)",
+                yaxis_title="Price",
+                hovermode="x unified",
+                plot_bgcolor="white",
+                xaxis=dict(showgrid=True, gridcolor="rgba(200,200,200,0.4)"),
+                yaxis=dict(showgrid=True, gridcolor="rgba(200,200,200,0.4)"),
+                legend=dict(
+                    orientation="h",
+                    y=-0.15,
+                ),
+                margin=dict(l=60, r=30, t=70, b=50),
+            )
+
+            fig.show()
+
+    return df
+
+
+def count_evaluations(history_price, horizon, interval):
+    ts_values = [ts for ts, _ in history_price]
+    count = 0
+    prev_ts = ts_values[0]
+    for ts in ts_values[1:]:
+        if ts - prev_ts >= interval:
+            if ts - ts_values[0] >= horizon:
+                count += 1
+            prev_ts = ts
+    return count
+
+
 ##################################################
 # Tracker Comparison
 ##################################################
@@ -70,21 +182,19 @@ def load_scores_json(path: str):
     
 
 def scores_json_to_df(scores_json):
-    start = scores_json["period"]["start"]
-    interval = scores_json["interval"]
+    # start = scores_json["period"]["start"]
+    # interval = scores_json["interval"]
 
     rows = []
     tracker_name = scores_json["tracker"]
 
-    for asset, score_list in scores_json["scores"].items():
-        for i, score in enumerate(score_list):
-            ts = start + i * interval
-
+    for asset, score_list in scores_json["asset_scores"].items():
+        for i, score_data in enumerate(score_list):
             rows.append({
                 "tracker": tracker_name,
                 "asset": asset,
-                "ts": ts,
-                "score": score,
+                "ts": score_data["ts"],
+                "score": score_data["score"],
             })
 
     df = pd.DataFrame(rows)
@@ -92,17 +202,17 @@ def scores_json_to_df(scores_json):
     return df
 
 
-def load_all_results(current_results_directory, horizon=None, step=None):
+def load_all_results(current_results_directory, horizon=None):
     """
-    Load all JSON results files matching *_h{horizon}_s{step}.json
+    Load all JSON results files matching *_h{horizon}.json
     and return a concatenated DataFrame.
-    If horizon or step is None then take all JSON results
+    If horizon is None then take all JSON results
     """
 
-    if horizon is None or step is None:
+    if horizon is None:
         pattern = "*.json"
     else:
-        pattern = f"*h{horizon}_s{step}.json"
+        pattern = f"*h{horizon}.json"
     search_path = os.path.join(current_results_directory, pattern)
 
     # Find matching files
@@ -144,9 +254,9 @@ def plot_tracker_comparison(df_all, asset=None):
     # ---- Compute stats per tracker ----
     tracker_means = df_plot.groupby("tracker")["score"].mean()
 
-    # Count best-times: each timestamp → who had highest score
+    # Count best-times: each timestamp → who had lowest score
     best_counts = (
-        df_plot.loc[df_plot.groupby("time")["score"].idxmax()]
+        df_plot.loc[df_plot.groupby("time")["score"].idxmin()]
         .groupby("tracker")
         .size()
     )
@@ -158,7 +268,7 @@ def plot_tracker_comparison(df_all, asset=None):
         best_val = best_counts.get(tracker, 0)
 
         legend_names[tracker] = (
-            f"{tracker} (mean={mean_val:.1f} | best {best_val} times)"
+            f"{tracker} (mean={mean_val:.3f} | best {best_val} times)"
         )
 
     # ---- Replace tracker column with custom label ----
@@ -169,7 +279,7 @@ def plot_tracker_comparison(df_all, asset=None):
         x="time",
         y="score",
         color="tracker",
-        title=f"Tracker Comparison {asset} — Likelihood Over Time",
+        title=f"Tracker Comparison {asset} — Normalized CRPS Over Time",
     )
 
     fig.update_traces(mode="lines+markers")

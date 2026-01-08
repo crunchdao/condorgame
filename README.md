@@ -1,8 +1,10 @@
 # Condor Game
 
-Condor game is a probabilistic forecasting challenge hosted by CrunchDAO at [crunchdao.com](https://crunchdao.com)
+Condor game is a real-time probabilistic forecasting challenge hosted by CrunchDAO at [crunchdao.com](https://crunchdao.com)
 
-The goal is to anticipate how asset prices will evolve by providing not a single forecasted value, but a full probability distribution over future log-returns.
+The goal is to anticipate how asset prices will evolve by providing not a single forecasted value, but a full probability distribution over the future price change at multiple forecast horizons and steps.
+
+**The current crypto assets to model are Bitcoin (BTC), Ethereum (ETH), Solana (SOL) and Tether Gold (XAU).**
 
 ## Install
 
@@ -12,23 +14,23 @@ pip install condorgame
 
 ## What You Must Predict
 
-Trackers must predict the **probability distribution of log-return price changes**, defined as:
+Trackers must predict the **probability distribution of price changes**, defined as:
 
 $$
-r_t = \log(P_t) - \log(P_{t-1})
+r_{t,k} = P_t - P_{t-k}
 $$
 
-For each future step (e.g., +5 minutes, +10 minutes, …), your tracker must return a **probability density function (PDF)** describing where the **future log-return** is likely to be.
+For each defined step **$k$** (e.g., 5 minutes, 1 hour, …), your tracker must return a full **probability density function (PDF)** over the future price change **$r_{t,k}$**.
 
 
 ## Visualize the challenge
 
-The Condor game is evaluated on **log-return predictions**, not raw prices.  
-Log-returns capture the *relative* change in price and produce a stationary series that is easier to model and compare across assets.
+The Condor game is evaluated on **incremental return predictions**, not raw prices.  
+Incremental returns capture the *relative* change in price and produce a stationary series that is easier to model and compare across assets.
 
-Below is an example of a **density forecast over log-returns for the next 24h at 5-minute intervals**:
+Below is an example of a **density forecast over incremental returns for the next 24h at 5-minute intervals**:
 
-![](docs/density_prediction_log_return_24h.png)
+![](docs/density_prediction_return_24h.png)
 
 Below is a minimal example showing what your tracker might return:
 ```python
@@ -40,8 +42,8 @@ Below is a minimal example showing what your tracker might return:
             "type": "builtin",
             "name": "norm",
             "params": {
-                "loc": -4e-5,       # mean log-return
-                "scale": 0.0067     # standard deviation of log-return
+                "loc": -0.01,       # mean return
+                "scale": 0.4        # standard deviation of return
             }
         }
     }
@@ -49,65 +51,74 @@ Below is a minimal example showing what your tracker might return:
 ]
 ```
 
-Here is the **log-return forecast mapped into price space**:
+Here is the **return forecast mapped into price space**:
 
 ![](docs/density_prediction_price_24h.png)
 
 
 ## Create your Tracker
 
-A tracker is a model that processes real-time asset data to predict future price changes. It uses past prices to generate a probabilistic forecast of log-returns. You can use the data provided by the challenge or any other datasets to improve your predictions.
+A tracker is a model that processes real-time asset data to predict future price changes. It uses past prices to generate a probabilistic forecast of incremental returns. You can use the data provided by the challenge or any other datasets to improve your predictions.
 
 To create your tracker, you need to define a class that implements the `TrackerBase` interface. Specifically, your class must implement the following methods:
 
 1. **`tick(self, data: PriceData)`**  
-   This method is called whenever new price data arrives. Use this method to update your internal state or model.
+    This method is called whenever new price data arrives. Use this method to update your internal state or model.
 
-   Data example:
+    Data example:
      ```python
       data = {
             "BTC": [(timestamp1, price1), (timestamp2, price2)],
             "SOL": [(timestamp1, price1)],
         }
      ```
+    When it's called:
+    - Typically every minute or when new data is available
+    - Before any prediction request
+    - Can be called multiple times before a predict
 2. **`predict(self, asset: str, horizon: int, step: int)`**  
-   This method should return a sequence of density predictions for the asset's price changes (log-returns). Each density prediction must comply with the [density_pdf](https://github.com/microprediction/densitypdf/blob/main/densitypdf/__init__.py) specification.
+    This method should return a sequence of density predictions for the asset's price changes on an horizon with step. Each density prediction must comply with the [density_pdf](https://github.com/microprediction/densitypdf/blob/main/densitypdf/__init__.py) specification.
 
 You can refer to the [Tracker examples](condor_forecast/examples) for guidance.
 
 ```python
 class GaussianStepTracker(TrackerBase):
     """
-    A benchmark tracker that models *future log-returns* as Gaussian-distributed.
+    A benchmark tracker that models *future incremental returns* as Gaussian-distributed.
 
-    For each forecast step k, the tracker returns a normal distribution
-    N(mu, sigma) where:
-        - mu    = mean historical log-return
-        - sigma = std historical log-return
+    For each forecast step, the tracker returns a normal distribution
+    r_{t,step} ~ N(a · mu, √a · sigma) where:
+        - mu    = mean historical return
+        - sigma = std historical return
+        - a = (step / 300) represents the ratio of the forecast step duration to the historical 5-minute return interval.
 
-    This is NOT a price-distribution; it is a distribution over log-returns
-    between consecutive steps.
+    This is not a price-distribution; it is a distribution over 
+    incremental returns between consecutive steps.
     """
     def __init__(self):
         super().__init__()
 
-    # The `tick` method is inherited from TrackerBase.
-    # override it if your tracker requires custom update logic
-
     def predict(self, asset: str, horizon: int, step: int):
-        # Retrieve past prices with sampling resolution equal to the prediction step.
-        pairs = self.prices.get_prices(asset, days=5, resolution=step)
+
+        # Retrieve recent historical prices sampled at 5-minute resolution
+        pairs = self.prices.get_prices(asset, days=5, resolution=300)
         if not pairs:
             return []
+
         _, past_prices = zip(*pairs)
 
-        # Compute historical log-returns
-        log_prices = np.log(past_prices)
-        returns = np.diff(log_prices)
+        if len(past_prices) < 3:
+            return []
 
-        # Estimate drift (mean log-return) and volatility (std dev of log-returns)
+        # Compute historical incremental returns (price differences)
+        returns = np.diff(past_prices)
+
+        # Estimate drift (mean return) and volatility (std dev of returns)
         mu = float(np.mean(returns))
         sigma = float(np.std(returns))
+
+        if sigma <= 0:
+            return []
 
         num_segments = horizon // step
 
@@ -120,9 +131,11 @@ class GaussianStepTracker(TrackerBase):
                 "type": "mixture",
                 "components": [{
                     "density": {
-                        "type": "builtin",
+                        "type": "builtin",             # Note: use 'builtin' instead of 'scipy' for speed
                         "name": "norm",  
-                        "params": {"loc": mu, "scale": sigma}
+                        "params": {
+                            "loc": (step/300) * mu, 
+                            "scale": np.sqrt(step/300) * sigma}
                     },
                     "weight": 1
                 }]
@@ -131,26 +144,45 @@ class GaussianStepTracker(TrackerBase):
         return distributions
 ```
 
+## Prediction Phase
+
+In each prediction round, players must submit **a set of density forecasts.**
+
+A prediction round is defined by **one asset, one forecast horizon** and **one or more step resolutions.**
+- A **24-hour horizon** forecast with **{5-minute, 1-hour, 6-hour, 24-hour}** increments is triggered **hourly** for each asset.
+- A **1-hour horizon** forecast with **{1-minute, 5-minute, 15-minute, 30-minute, 1-hour}** increments is triggered **every 3 minutes** for each asset.
+
+All required forecasts for a prediction round must be generated within **40 seconds.**
+
+## Scoring
+- Once the full horizon has passed, each prediction is scored using a **CRPS scoring function**.
+- A lower **CRPS score** reflects more accurate predictions.
+- Leaderboard ranking is based on a **7-day rolling average** of CRPS scores across **all assets and horizons.**
+
 ## Check your Tracker performance
 
 TrackerEvaluator allows you to track your model's performance over time locally before participating in the live game. It maintains:
 
-- Overall likelihood score
-- Recent likelihood score
+- Overall CRPS score
+- Recent CRPS score
 - Quarantine predictions (predictions stored and evaluated at a later time)
 
-**A higher likelihood score reflects more accurate predictions.**
+**A lower CRPS score reflects more accurate predictions.**
 
 ```python
 from condorgame.tracker_evaluator import TrackerEvaluator
 from condorgame.examples.benchmarktracker import GaussianStepTracker  # Your custom tracker
 
+# Initialize the tracker evaluator with your custom GaussianStepTracker
 tracker_evaluator = TrackerEvaluator(GaussianStepTracker())
+# Feed a new price tick for SOL
 tracker_evaluator.tick({"SOL": [(ts, price)]})
-predictions = tracker_evaluator.predict("SOL", horizon=86400, step=300)
+# You will generate predictive densities for SOL over a 24-hour period (86400s) at multiple step resolutions: 5 minutes, 1 hour, 6 hours and 24 hours
+predictions = tracker_evaluator.predict("SOL", horizon=86400,
+                                        step_config={"5min":300, "1hour":3600, "6hour":21600, "24hour":86400})
 
-print(f"My overall likelihood score: {tracker_evaluator.overall_likelihood_score():.4f}")
-print(f"My recent likelihood score: {tracker_evaluator.recent_likelihood_score():.4f}")
+print(f"My overall CRPS score: {tracker_evaluator.overall_crps_score("SOL"):.4f}")
+print(f"My recent CRPS score: {tracker_evaluator.recent_crps_score("SOL"):.4f}")
 ```
 
 

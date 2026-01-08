@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 import numpy as np
+from tqdm import tqdm
 
 from condorgame.price_provider import shared_pricedb
 from condorgame.tracker import TrackerBase
@@ -8,26 +9,36 @@ from condorgame.tracker_evaluator import TrackerEvaluator
 
 class GaussianStepTracker(TrackerBase):
     """
-    A benchmark tracker that models *future log-returns* as Gaussian-distributed.
+    A benchmark tracker that models *future incremental returns* as Gaussian-distributed.
 
-    For each forecast step k, the tracker returns a normal distribution
-    N(mu, sigma) where:
-        - mu    = mean historical log-return
-        - sigma = std historical log-return
+    For each forecast step, the tracker returns a normal distribution
+    r_{t,step} ~ N(a · mu, √a · sigma) where:
+        - mu    = mean historical return
+        - sigma = std historical return
+        - a = (step / 300) represents the ratio of the forecast step duration to the historical 5-minute return interval.
 
-    This is NOT a price-distribution; it is a distribution over log-returns
-    between consecutive steps.
+    Multi-resolution forecasts (5min, 1h, 6h, 24h, ...)
+    are automatically handled by `TrackerBase.predict_all()`,
+    which calls the `predict()` method once per step size.
+
+    /!/ This is not a price-distribution; it is a distribution over 
+    incremental returns between consecutive steps /!/
     """
     def __init__(self):
         super().__init__()
 
-    # The `tick` method is inherited from TrackerBase.
-    # override it if your tracker requires custom update logic
-
     def predict(self, asset: str, horizon: int, step: int):
+        """
+        Produce a sequence of incremental return distributions
+        for a single (asset, horizon, step) configuration.
 
-        # Retrieve past prices with sampling resolution equal to the prediction step.
-        pairs = self.prices.get_prices(asset, days=5, resolution=step)
+        This method is called automatically by `TrackerBase.predict_all()`
+        for each step resolution requested by the game.
+        """
+
+        # Retrieve recent historical prices sampled at 5-minute resolution
+        resolution=300
+        pairs = self.prices.get_prices(asset, days=3, resolution=resolution)
         if not pairs:
             return []
 
@@ -36,11 +47,10 @@ class GaussianStepTracker(TrackerBase):
         if len(past_prices) < 3:
             return []
 
-        # Compute historical log-returns
-        log_prices = np.log(past_prices)
-        returns = np.diff(log_prices)
+        # Compute historical incremental returns (price differences)
+        returns = np.diff(past_prices)
 
-        # Estimate drift (mean log-return) and volatility (std dev of log-returns)
+        # Estimate drift (mean return) and volatility (std dev of returns)
         mu = float(np.mean(returns))
         sigma = float(np.std(returns))
 
@@ -49,18 +59,30 @@ class GaussianStepTracker(TrackerBase):
 
         num_segments = horizon // step
 
-        # Produce one Gaussian for each future time step
-        # The returned list must be compatible with the `density_pdf` library.
+        # Construct one predictive distribution per future time step.
+        # Each distribution models the incremental return over a `step`-second interval.
+        #
+        # IMPORTANT:
+        # - The returned objects must strictly follow the `density_pdf` specification.
+        # - Each entry corresponds to the return between t + (k−1)·step and t + k·step.
+        #
+        # We use a single-component Gaussian mixture for simplicity:
+        #   r_{t,k} ~ N( (step / 300) · μ , sqrt(step / 300) · σ )
+        #
+        # where μ and σ are estimated from historical 5-minute returns.
         distributions = []
         for k in range(1, num_segments + 1):
             distributions.append({
-                "step": k * step,
+                "step": k * step,                      # Time offset (in seconds) from forecast origin
                 "type": "mixture",
                 "components": [{
                     "density": {
-                        "type": "builtin",
+                        "type": "builtin",             # Note: use 'builtin' distributions instead of 'scipy' for speed
                         "name": "norm",  
-                        "params": {"loc": mu, "scale": sigma}
+                        "params": {
+                            "loc": (step/resolution) * mu, 
+                            "scale": np.sqrt(step/resolution) * sigma
+                            }
                     },
                     "weight": 1
                 }]
@@ -70,41 +92,83 @@ class GaussianStepTracker(TrackerBase):
 
 
 if __name__ == "__main__":
-    from condorgame.debug.plots import plot_quarantine, plot_prices, plot_log_return_prices, plot_scores
-    from condorgame.examples.utils import load_test_prices_once, load_initial_price_histories_once
+    from condorgame.debug.plots import plot_quarantine, plot_prices, plot_scores
+    from condorgame.examples.utils import load_test_prices_once, load_initial_price_histories_once, count_evaluations
 
     # Setup tracker + evaluator
     tracker_evaluator = TrackerEvaluator(GaussianStepTracker())
 
-    # For each asset and historical timestamp, compute a 24-hour density forecast 
-    # at 5-minute intervals and evaluate the tracker against actual outcomes.
-    assets = ["SOL", "BTC"]
-    
-    # Prediction horizon = 24h (in seconds)
-    HORIZON = 86400
-    # Prediction step = 5 minutes (in seconds)
-    STEP = 300
-    # How often we evaluate the tracker (in seconds)
-    INTERVAL = 3600
+    # For each asset and historical timestamp, generate density forecasts
+    # over a fixed forecast horizon (e.g. 24h or 1h) at multiple temporal
+    # resolutions and evaluate them against realized outcomes.
+
+    # Assets to evaluate
+    assets = ["BTC", "SOL"] # Supported assets: "BTC", "SOL", "ETH", "XAU"
+
+    ###
+    # Forecast configuration (in seconds)
+    # Each profile defines:
+    # - a forecast horizon
+    # - a set of step resolutions
+    # - how often predictions are triggered
+
+    FORECAST_PROFILES = {
+        "24h": {
+            "horizon": 24 * 3600,  # 24 hours
+            # Multi-resolution forecast grid
+            # All forecasts span the same horizon but differ in temporal granularity.
+            "steps": {
+                "5min":   300,
+                "1hour":  3600,
+                "6hour":  6 * 3600,
+                "24hour": 24 * 3600,
+            },
+            "interval": 3600,  # triggered every hour
+        },
+        "1h": {
+            "horizon": 1 * 3600,  # 1 hour
+            "steps": {
+                "1min":  60,
+                "5min":  60 * 5,
+                "15min": 60 * 15,
+                "30min": 60 * 30,
+                "1hour": 3600,
+            },
+            "interval": 60 * 10,  # local evaluation interval (live platform will trigger every 3 minutes)
+        },
+    }
+
+    # Select which forecast profile to evaluate
+    ACTIVE_HORIZON = "24h"  # options: "24h", "1h"
+
+    HORIZON = FORECAST_PROFILES[ACTIVE_HORIZON]["horizon"]
+    STEP_CONFIG = FORECAST_PROFILES[ACTIVE_HORIZON]["steps"]
+    INTERVAL = FORECAST_PROFILES[ACTIVE_HORIZON]["interval"]
 
     # End timestamp for the test data
-    evaluation_end: datetime = datetime.now(timezone.utc)
+    # evaluation_end: datetime = datetime.now(timezone.utc)
+    evaluation_end: datetime = datetime(2025, 11, 15, 00, 00, 00, tzinfo=timezone.utc)
 
     # Number of days of test data to load
-    days = 30
-    # Amount of warm-up history to load
+    # Note: the last `horizon` seconds of the time series will not be scored
+    days = 5
+
+    # Number of days of historical data used as warm-up before evaluation.
+    # This history is used only to initialize the tracker and is not scored.
     days_history = 30
 
     ## Load the last N days of price data (test period)
     test_asset_prices = load_test_prices_once(
         assets, shared_pricedb, evaluation_end, days=days
     )
+    # test_asset_prices : dict : {asset -> [(timestamp, price), ...]} used for evaluation.
 
     ## Provide the tracker with initial historical data (for the first tick):
     ## load prices from the last H days up to N days ago
     initial_histories = load_initial_price_histories_once(
         assets, shared_pricedb, evaluation_end, days_history=days_history, days_offset=days
     )
+    # initial_histories : dict : {asset -> [(timestamp, price), ...]} used as warm-up history.
 
     # Run live simulation on historic data
     show_first_plot = True
@@ -116,32 +180,54 @@ if __name__ == "__main__":
 
         prev_ts = 0
         predict_count = 0
+        pbar = tqdm(desc=f"Evaluating {asset}", total=count_evaluations(history_price, HORIZON, INTERVAL), unit="eval")
         for ts, price in history_price:
-
             # Feed the new tick
             tracker_evaluator.tick({asset: [(ts, price)]})
 
             # Evaluate prediction every hour (ts is in second)
             if ts - prev_ts >= INTERVAL:
                 prev_ts = ts
-                predictions_evaluated = tracker_evaluator.predict(asset, HORIZON, STEP)
+                predictions_evaluated = tracker_evaluator.predict(asset, HORIZON, STEP_CONFIG)
+
+                # Quarantine mechanism:
+                # - Predictions are not scored immediately. Each prediction is placed in a quarantine 
+                #   until sufficient future price data (up to the full horizon ticks) becomes available.
+                # - Predictions issued within the final `horizon` seconds of the
+                #   time series cannot be scored, as future observations are unavailable.
+
+                if predictions_evaluated:
+                    pbar.update(1)
 
                 # Periodically display results
-                if predictions_evaluated and predict_count % 300 == 0:
+                if predictions_evaluated and predict_count % 10 == 0:
+
                     if show_first_plot:
-                        ## log-return forecast mapped into price space
-                        plot_quarantine(asset, predictions_evaluated[0], tracker_evaluator.tracker.prices, mode="incremental")
-                        ## density forecast over log-returns
-                        plot_quarantine(asset, predictions_evaluated[0], tracker_evaluator.tracker.prices, mode="direct")
+                        ## Return forecast mapped into price space
+                        plot_quarantine(asset, predictions_evaluated[0], name_step="5min", prices=tracker_evaluator.tracker.prices, mode="incremental", lookback_seconds=HORIZON/4)
+                        ## density forecast over returns
+                        plot_quarantine(asset, predictions_evaluated[0], name_step="5min", prices=tracker_evaluator.tracker.prices, mode="direct")
                         show_first_plot = False
-                    print(f"My average likelihood score {asset}: {tracker_evaluator.overall_likelihood_score_asset(asset):.4f}")
-                    print(f"My recent average likelihood score {asset}: {tracker_evaluator.recent_likelihood_score_asset(asset):.4f}")
+
+                    pbar.write(
+                        f"[{asset}] avg norm CRPS={tracker_evaluator.overall_crps_score_asset(asset):.4f} | "
+                        f"recent={tracker_evaluator.recent_crps_score_asset(asset):.4f}"
+                    )
                 predict_count += 1
+        
+        pbar.write(
+                f"[{asset}] avg norm CRPS={tracker_evaluator.overall_crps_score_asset(asset):.4f} | "
+                f"recent={tracker_evaluator.recent_crps_score_asset(asset):.4f}"
+            )
+        
+        pbar.close()
+        print()
 
     tracker_name = tracker_evaluator.tracker.__class__.__name__
     print(f"\nTracker {tracker_name}:"
-        f"\nFinal average likelihood score: {tracker_evaluator.overall_likelihood_score():.4f}")
-    
+        f"\nFinal average normalized crps score: {tracker_evaluator.overall_crps_score():.4f}")
+
     # Plot scoring timeline
     timestamped_scores = tracker_evaluator.scores
+    print("\n(Note - Scores appear after quarantine: a score at time t evaluates a forecast issued at (t - horizon))")
     plot_scores(timestamped_scores)
