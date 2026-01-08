@@ -78,10 +78,10 @@ class TrackerBase(abc.ABC):
         Returns:
             dict[str, list[dict]]:
                 {
-                    "300":   [...],
-                    "3600":  [...],
-                    "21600":  [...],
-                    "86400": [...]
+                    300:   [...],
+                    3600:  [...],
+                    21600:  [...],
+                    86400: [...]
                 }
         """
         predictions = {}
@@ -90,6 +90,6 @@ class TrackerBase(abc.ABC):
             if step > horizon:
                 continue
 
-            predictions[str(step)] = self.predict(asset=asset, horizon=horizon, step=step)
+            predictions[step] = self.predict(asset=asset, horizon=horizon, step=step)
 
         return predictions

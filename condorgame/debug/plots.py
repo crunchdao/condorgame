@@ -28,11 +28,10 @@ def plot_quarantine(asset, quarantine_entry, step: int, prices: PriceStore, mode
 
     ts, predictions, steps = quarantine_entry
 
-    name_step = str(step)
-    if name_step not in predictions:
+    if step not in predictions:
         return
 
-    predictions = predictions[name_step]
+    predictions = predictions[step]
     horizon = step * len(predictions)
 
     # Skip if the reference timestamp is after the last known price
@@ -93,7 +92,7 @@ def plot_quarantine(asset, quarantine_entry, step: int, prices: PriceStore, mode
 
     import plotly.graph_objects as go
 
-    title=f"Predicted {asset} {'return price' if mode=="direct" else "price"} distribution (horizon={horizon}s | step={name_step}s) at {scales_df["time"].iloc[0]}"
+    title=f"Predicted {asset} {'return price' if mode=="direct" else "price"} distribution (horizon={horizon}s | step={step}s) at {scales_df["time"].iloc[0]}"
 
     # Create a filled band between q05 and q95
     fig = go.Figure()
