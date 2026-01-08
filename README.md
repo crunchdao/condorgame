@@ -150,7 +150,7 @@ In each prediction round, players must submit **a set of density forecasts.**
 
 A prediction round is defined by **one asset, one forecast horizon** and **one or more step resolutions.**
 - A **24-hour horizon** forecast with **{5-minute, 1-hour, 6-hour, 24-hour}** increments is triggered **hourly** for each asset.
-- A **1-hour horizon** forecast with **{1-minute, 5-minute, 15-minute, 30-minute, 1-hour}** increments is triggered **every 3 minutes** for each asset.
+- A **1-hour horizon** forecast with **{1-minute, 5-minute, 15-minute, 30-minute, 1-hour}** increments is triggered **every 12 minutes** for each asset.
 
 All required forecasts for a prediction round must be generated within **40 seconds.**
 
