@@ -6,3 +6,4 @@ densitypdf
 
 # required only for debugging
 plotly
+sortedcontainers

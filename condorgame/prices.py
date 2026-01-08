@@ -1,57 +1,52 @@
-from bisect import bisect_left
+from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from typing import TypeAlias
+
+from sortedcontainers import SortedDict
 
 PriceEntry: TypeAlias = tuple[int, float]
 Asset: TypeAlias = str
 PriceData: TypeAlias = dict[Asset, list[PriceEntry]]
 
+
 class PriceStore:
     """
-    PriceStore caches prices for multiple assets,
-    allows you to access and retrieve these prices, and update them.
-    Everything is designed to maintain performance and provide convenient functions.
+    PriceStore caches prices for multiple assets and allows fast updates / queries.
+    Uses sortedcontainers.SortedDict: timestamp -> price (kept sorted, updates overwrite).
     """
 
     def __init__(self, window_days: int = 30):
-        self.data = defaultdict(lambda: {"ts": [], "price": []})
+        # per asset: SortedDict[int, float]
+        self.data: dict[Asset, SortedDict[int, float]] = defaultdict(SortedDict)
         self.window_days = window_days
 
     def add_price(self, symbol: Asset, price: float, timestamp: int):
         self.add_prices(symbol, [(timestamp, price)])
 
     def add_prices(self, symbol: Asset, entries: list[PriceEntry]):
-        """Add multiple (timestamp, price) pairs for a single asset."""
+        """Add multiple (timestamp, price) pairs for a single asset (insert/update)."""
         if not entries:
             return
 
-        d = self.data[symbol]
-        ts_new, price_new = zip(*entries)
+        series = self.data[symbol]
 
-        # Case 1: All new data is strictly after the last known timestamp → fast path
-        if not d["ts"] or ts_new[0] > d["ts"][-1]:
-            d["ts"].extend(ts_new)
-            d["price"].extend(price_new)
-        else:
-            # Case 2: Potential overlap → append only strictly newer points, skip duplicates
-            last_ts = d["ts"][-1] if d["ts"] else None
-            for t, p in zip(ts_new, price_new):
-                if last_ts is None or t > last_ts:
-                    d["ts"].append(t)
-                    d["price"].append(p)
-                    last_ts = t
-                elif t == last_ts:
-                    # Update existing last value instead of adding a duplicate
-                    d["price"][-1] = p
+        # Update/insert (if same ts exists, it's overwritten)
+        # (If entries may contain duplicates, last one wins naturally.)
+        for t, p in entries:
+            series[t] = p
 
-        # Drop old points
-        if len(d["ts"]) > 0:
-            cutoff = int((datetime.fromtimestamp(d["ts"][0], tz=timezone.utc) - timedelta(days=5)).timestamp())
-            i = bisect_left(d["ts"], cutoff)
-            if i > 0:
-                d["ts"] = d["ts"][i:]
-                d["price"] = d["price"][i:]
+        # Keep only last window_days relative to newest timestamp
+        if series:
+            last_ts = series.peekitem(-1)[0]
+            cutoff = int(
+                (datetime.fromtimestamp(last_ts, tz=timezone.utc) - timedelta(days=self.window_days)).timestamp()
+            )
+
+            i = series.bisect_left(cutoff)
+            if i:
+                del series.iloc[:i]
 
     def add_bulk(self, data: PriceData):
         """
@@ -65,78 +60,64 @@ class PriceStore:
         for symbol, entries in data.items():
             self.add_prices(symbol, entries)
 
-    def get_prices(self, asset: str, days: int | None = None, resolution: int = 60):
+    def get_prices(self, asset: str, days: int | None = None, resolution: int = 60) -> list[PriceEntry]:
         """
         Quickly retrieve (timestamp, price) pairs spaced by `resolution` seconds.
-        Stored data has a 60-second granularity.
         """
-        d = self.data.get(asset)
-        if not d:
+        series = self.data.get(asset)
+        if not series:
             return []
 
-        ts = d["ts"]
-        prices = d["price"]
-        if not ts:
-            return []
-
-        # Precompute cutoff timestamp if needed
-        if days:
-            cutoff = int((datetime.fromtimestamp(ts[-1], tz=timezone.utc) - timedelta(days=days)).timestamp())
-            start_idx = bisect_left(ts, cutoff)
+        if days is not None:
+            last_ts = series.peekitem(-1)[0]
+            cutoff = int((datetime.fromtimestamp(last_ts, tz=timezone.utc) - timedelta(days=days)).timestamp())
+            it = series.irange(minimum=cutoff, inclusive=(True, True))
         else:
-            start_idx = 0
+            it = iter(series.keys())
 
-        n = len(ts)
-        if start_idx >= n:
-            return []
+        result: list[PriceEntry] = []
+        target_next: int | None = None
 
-        result = []
-        last_t = ts[start_idx]
-
-        result.append((last_t, prices[start_idx]))
-        target_next = last_t + resolution
-
-        for i in range(start_idx + 1, n):
-            t = ts[i]
-            if t >= target_next:
-                result.append((t, prices[i]))
-                target_next = t + resolution  # Maintain spacing
+        for t in it:
+            if target_next is None:
+                result.append((t, series[t]))
+                target_next = t + resolution
+            elif t >= target_next:
+                result.append((t, series[t]))
+                target_next = t + resolution
 
         return result
 
-    def get_last_price(self, asset: str) -> tuple[int, float] | None:
-        """
-        Retrieve the last (timestamp, price) pair for a given asset.
-        Returns None if no data is available.
-        """
-        d = self.data.get(asset)
-        if not d or not d["ts"]:
+    def get_last_price(self, asset: str) -> PriceEntry | None:
+        """Retrieve the last (timestamp, price) pair for a given asset."""
+        series = self.data.get(asset)
+        if not series:
             return None
+        t, p = series.peekitem(-1)
+        return t, p
 
-        return d["ts"][-1], d["price"][-1]
-
-    def get_closest_price(self, asset: str, time: int) -> tuple[int, float] | None:
+    def get_closest_price(self, asset: str, time: int) -> PriceEntry | None:
         """
         Retrieve the (timestamp, price) pair closest to the given timestamp for a specific asset.
         Returns None if no data is available.
         """
-        d = self.data.get(asset)
-        if not d or not d["ts"]:
+        series = self.data.get(asset)
+        if not series:
             return None
 
-        ts = d["ts"]
-        prices = d["price"]
-        pos = bisect_left(ts, time)
+        pos = series.bisect_left(time)
 
         if pos == 0:
-            return ts[0], prices[0]
-        if pos == len(ts):
-            return ts[-1], prices[-1]
+            t, p = series.peekitem(0)
+            return t, p
+        if pos == len(series):
+            t, p = series.peekitem(-1)
+            return t, p
 
-        before = pos - 1
-        after = pos
-        if time - ts[before] <= ts[after] - time:
-            return ts[before], prices[before]
+        t_after = series.iloc[pos]
+        t_before = series.iloc[pos - 1]
+
+        if time - t_before <= t_after - time:
+            return t_before, series[t_before]
         else:
-            return ts[after], prices[after]
-
+            return t_after, series[t_after]

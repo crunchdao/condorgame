@@ -6,6 +6,7 @@ from bisect import bisect_left
 
 from condorgame.prices import PriceStore, Asset, PriceEntry
 
+
 # ---------------------------
 # Helper function
 # ---------------------------
@@ -30,9 +31,9 @@ def test_add_and_get_last_price():
     store = PriceStore()
     ts = int(datetime.now(timezone.utc).timestamp())
     series = generate_price_series(ts, 5, 60)
-    
+
     store.add_prices("BTC", series)
-    
+
     # Check last price
     last_ts, last_price = store.get_last_price("BTC")
     assert last_ts == series[-1][0]
@@ -66,7 +67,34 @@ def test_get_prices_with_resolution():
     # Request prices every 2 minutes
     prices_resampled = store.get_prices("BTC", resolution=120)
     # Should skip every other point
-    assert all(prices_resampled[i+1][0] - prices_resampled[i][0] >= 120 for i in range(len(prices_resampled)-1))
+    assert all(prices_resampled[i + 1][0] - prices_resampled[i][0] >= 120 for i in range(len(prices_resampled) - 1))
+    assert len(prices_resampled) == 5
+
+
+def test_get_prices_with_days():
+    store = PriceStore()
+    ts = int(datetime.now(timezone.utc).timestamp())
+    series = generate_price_series(ts, 10, 60 * 60 * 24)  # every 1 min
+    store.add_prices("BTC", series)
+
+    prices_resampled = store.get_prices("BTC", 5)
+    assert len(prices_resampled) == 6  # because inclusive
+
+
+def test_add_older_prices():
+    store = PriceStore()
+    ts = int(datetime.now(timezone.utc).timestamp())
+    series = generate_price_series(ts, 10, 60)  # every 1 min
+
+    series2 = generate_price_series(series[-1][0] + 60, 1, 60)  # every 1 min
+    store.add_prices("BTC", series2)
+
+    store.add_prices("BTC", series)
+
+    # Request prices every 2 minutes
+    prices_resampled = store.get_prices("BTC", resolution=60)
+    # Should skip every other point
+    assert len(prices_resampled) == len(series) + len(series2)
 
 
 def test_add_bulk_and_deduplication():
@@ -84,8 +112,70 @@ def test_add_bulk_and_deduplication():
     # Last price should be from series2
     last_ts, last_price = store.get_last_price("BTC")
     assert last_price == 200.0
+    assert len(store.data["BTC"]) == len(series1) + 1
 
 
+def test_add_duplicate_prices():
+    store = PriceStore()
+    ts = int(datetime.now(timezone.utc).timestamp())
+    series = generate_price_series(ts, 5, 60)
+    store.add_prices("BTC", series)
+
+    # Add duplicate prices
+    store.add_prices("BTC", series)
+
+    # Fetch all prices to ensure no duplicates exist
+    prices = store.get_prices("BTC")
+    assert len(prices) == len(series)
+    assert prices == series
+
+def test_update_existing_timestamp_middle():
+    store = PriceStore()
+    ts = int(datetime.now(timezone.utc).timestamp())
+    series = generate_price_series(ts, 5, 60)
+    store.add_prices("BTC", series)
+
+    # update middle point
+    mid_t = series[2][0]
+    store.add_prices("BTC", [(mid_t, 999.0)])
+
+    closest_ts, closest_price = store.get_closest_price("BTC", mid_t)
+    assert closest_ts == mid_t
+    assert closest_price == 999.0
+
+    # length unchanged
+    assert len(store.data["BTC"]) == len(series)
+
+def test_duplicates_inside_same_batch_last_wins():
+    store = PriceStore()
+    t = int(datetime.now(timezone.utc).timestamp())
+    store.add_prices("BTC", [(t, 100.0), (t, 200.0), (t, 300.0)])
+    assert store.get_last_price("BTC") == (t, 300.0)
+    assert len(store.data["BTC"]) == 1
+
+def test_add_unsorted_entries():
+    store = PriceStore()
+    t = int(datetime.now(timezone.utc).timestamp())
+    entries = [(t+120, 3.0), (t, 1.0), (t+60, 2.0)]
+    store.add_prices("BTC", entries)
+
+    prices = store.get_prices("BTC", resolution=60)
+    assert [x[0] for x in prices] == [t, t+60, t+120]
+
+def test_window_days_trimming():
+    store = PriceStore(window_days=5)
+    now = int(datetime.now(timezone.utc).timestamp())
+
+    # create points spanning 10 days (1/day)
+    series = generate_price_series(now - 9*86400, 10, 86400)
+    store.add_prices("BTC", series)
+
+    # should keep only last 5 days => days 0..5 inclusive = 6 points
+    # (si ton cutoff est ts_last - 5days, inclusif)
+    assert len(store.data["BTC"]) == 6
+    last_ts, _ = store.get_last_price("BTC")
+    oldest_kept = min(store.data["BTC"].keys())
+    assert oldest_kept >= last_ts - 5*86400
 # ---------------------------
 # Run pytest directly
 # ---------------------------
