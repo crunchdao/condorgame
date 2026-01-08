@@ -150,7 +150,7 @@ In each prediction round, players must submit **a set of density forecasts.**
 
 A prediction round is defined by **one asset, one forecast horizon** and **one or more step resolutions.**
 - A **24-hour horizon** forecast with **{5-minute, 1-hour, 6-hour, 24-hour}** increments is triggered **hourly** for each asset.
-- A **1-hour horizon** forecast with **{1-minute, 5-minute, 15-minute, 30-minute, 1-hour}** increments is triggered **every 3 minutes** for each asset.
+- A **1-hour horizon** forecast with **{1-minute, 5-minute, 15-minute, 30-minute, 1-hour}** increments is triggered **every 12 minutes** for each asset.
 
 All required forecasts for a prediction round must be generated within **40 seconds.**
 
@@ -178,8 +178,8 @@ tracker_evaluator = TrackerEvaluator(GaussianStepTracker())
 # Feed a new price tick for SOL
 tracker_evaluator.tick({"SOL": [(ts, price)]})
 # You will generate predictive densities for SOL over a 24-hour period (86400s) at multiple step resolutions: 5 minutes, 1 hour, 6 hours and 24 hours
-predictions = tracker_evaluator.predict("SOL", horizon=86400,
-                                        step_config={"5min":300, "1hour":3600, "6hour":21600, "24hour":86400})
+predictions = tracker_evaluator.predict("SOL", horizon=3600*24,
+                                        steps=[300, 3600, 3600*6, 3600*24])
 
 print(f"My overall CRPS score: {tracker_evaluator.overall_crps_score("SOL"):.4f}")
 print(f"My recent CRPS score: {tracker_evaluator.recent_crps_score("SOL"):.4f}")

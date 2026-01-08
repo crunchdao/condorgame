@@ -117,24 +117,24 @@ if __name__ == "__main__":
             "horizon": 24 * 3600,  # 24 hours
             # Multi-resolution forecast grid
             # All forecasts span the same horizon but differ in temporal granularity.
-            "steps": {
-                "5min":   300,
-                "1hour":  3600,
-                "6hour":  6 * 3600,
-                "24hour": 24 * 3600,
-            },
+            "steps": [
+                        300,       # "5min"
+                        3600,      # "1hour"
+                        6 * 3600,  # "6hour"
+                        24 * 3600, # "24hour"
+            ],
             "interval": 3600,  # triggered every hour
         },
         "1h": {
             "horizon": 1 * 3600,  # 1 hour
-            "steps": {
-                "1min":  60,
-                "5min":  60 * 5,
-                "15min": 60 * 15,
-                "30min": 60 * 30,
-                "1hour": 3600,
-            },
-            "interval": 60 * 10,  # local evaluation interval (live platform will trigger every 3 minutes)
+            "steps": [
+                        60,       # "1min"
+                        60 * 5,   # "5min"
+                        60 * 15,  # "15min"
+                        60 * 30,  # "30min"
+                        3600,     # "1hour"
+            ],
+            "interval": 60 * 12,  # triggered every 12 minutes
         },
     }
 
@@ -142,7 +142,7 @@ if __name__ == "__main__":
     ACTIVE_HORIZON = "24h"  # options: "24h", "1h"
 
     HORIZON = FORECAST_PROFILES[ACTIVE_HORIZON]["horizon"]
-    STEP_CONFIG = FORECAST_PROFILES[ACTIVE_HORIZON]["steps"]
+    STEPS = FORECAST_PROFILES[ACTIVE_HORIZON]["steps"]
     INTERVAL = FORECAST_PROFILES[ACTIVE_HORIZON]["interval"]
 
     # End timestamp for the test data
@@ -188,7 +188,7 @@ if __name__ == "__main__":
             # Evaluate prediction every hour (ts is in second)
             if ts - prev_ts >= INTERVAL:
                 prev_ts = ts
-                predictions_evaluated = tracker_evaluator.predict(asset, HORIZON, STEP_CONFIG)
+                predictions_evaluated = tracker_evaluator.predict(asset, HORIZON, STEPS)
 
                 # Quarantine mechanism:
                 # - Predictions are not scored immediately. Each prediction is placed in a quarantine 
@@ -204,9 +204,9 @@ if __name__ == "__main__":
 
                     if show_first_plot:
                         ## Return forecast mapped into price space
-                        plot_quarantine(asset, predictions_evaluated[0], name_step="5min", prices=tracker_evaluator.tracker.prices, mode="incremental", lookback_seconds=HORIZON/4)
+                        plot_quarantine(asset, predictions_evaluated[0], step=STEPS[0], prices=tracker_evaluator.tracker.prices, mode="incremental", lookback_seconds=HORIZON/4)
                         ## density forecast over returns
-                        plot_quarantine(asset, predictions_evaluated[0], name_step="5min", prices=tracker_evaluator.tracker.prices, mode="direct")
+                        plot_quarantine(asset, predictions_evaluated[0], step=STEPS[0], prices=tracker_evaluator.tracker.prices, mode="direct")
                         show_first_plot = False
 
                     pbar.write(
