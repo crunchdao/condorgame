@@ -106,6 +106,7 @@ As a participant, you only need to implement **one method**: `predict()`.
     Each density prediction must comply with the [density_pdf](https://github.com/microprediction/densitypdf/blob/main/densitypdf/__init__.py) specification.
     
 3. **Multi-step forecasts (handled automatically)**
+
     You **do not** need to implement multi-step logic.
 
     The framework will automatically call your `predict()` method multiple times via `predict_all(asset, horizon, steps)` to construct forecasts at different temporal resolutions.
