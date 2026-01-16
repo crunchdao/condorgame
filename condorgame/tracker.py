@@ -1,7 +1,7 @@
 import abc
 
 from condorgame.prices import PriceStore, Asset, PriceEntry, PriceData
-from condorgame.utils.distributions import validate_distribution
+from condorgame.utils.distributions import validate_distribution, round_distribution_digits
 
 
 class TrackerBase(abc.ABC):
@@ -107,19 +107,27 @@ class TrackerBase(abc.ABC):
                 86400: [...]
             }
         """
-        predictions = {}
+        all_predictions = {}
 
         for step in steps:
             if step > horizon:
                 continue
 
-            preds = self.predict(asset=asset, horizon=horizon, step=step)
+            predictions = self.predict(asset=asset, horizon=horizon, step=step)
+            if not predictions:
+                all_predictions[step] = []
+                continue
 
-            for d in preds:
-                validate_distribution(d)
+            predictions_checked = []
+            for dist in predictions:
+                # Validate mixture distribution: enforce MAX_DISTRIBUTION_COMPONENTS recursively
+                validate_distribution(dist)
+                # Round all numeric parameters to a fixed number of significant digits
+                dist = round_distribution_digits(dist, digits=6)
+                predictions_checked.append(dist)
 
-            predictions[step] = preds
+            all_predictions[step] = predictions_checked
 
-        return predictions
+        return all_predictions
 
 

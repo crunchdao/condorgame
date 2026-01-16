@@ -1,3 +1,4 @@
+from math import log10, floor
 from condorgame.constants import MAX_DISTRIBUTION_COMPONENTS
 
 
@@ -51,3 +52,44 @@ def validate_distribution(dist: dict):
             f"(including nested mixtures), but the maximum allowed is "
             f"{MAX_DISTRIBUTION_COMPONENTS}."
         )
+
+
+def round_significant(value: float, sig_digits: int = 10) -> float:
+    """
+    Round a number to a specified number of significant digits.
+
+    Parameters
+    ----------
+    value : float
+        The number to round.
+    sig_digits : int
+        Number of significant digits to retain.
+
+    Returns
+    -------
+    float
+        The value rounded to `sig_digits` significant digits.
+    """
+    if value == 0.0:
+        return 0.0
+
+    order = floor(log10(abs(value)))
+    decimals = sig_digits - order - 1
+    return round(value, decimals)
+
+
+def round_distribution_digits(dist: dict, digits: int = 10) -> dict:
+    """ Round weights and params values of a distribution 
+        to a specified number of significant digits. """
+    if dist.get("type") == "mixture":
+        for comp in dist["components"]:
+            comp["weight"] = round_significant(comp["weight"], digits)
+            round_distribution_digits(comp["density"], digits)
+
+    else:
+        params = dist.get("params", {})
+        for k, v in params.items():
+            if isinstance(v, (int, float)):
+                params[k] = round_significant(v, digits)
+
+    return dist
