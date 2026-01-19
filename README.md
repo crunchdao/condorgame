@@ -9,6 +9,11 @@ The goal is to anticipate how asset prices will evolve by providing not a single
 - **Ethereum (ETH)**
 - **Solana (SOL)**
 - **Tether Gold (XAUT)**
+- **SP500 tokenized ETF (SPYX)**
+- **NVIDIA tokenized stock (NVDAX)**
+- **Tesla tokenized stock (TSLAX)**
+- **Apple tokenized stock (AAPLX)**
+- **Alphabet tokenized stock (GOOGLX)**
 
 ## Install
 
@@ -199,8 +204,16 @@ class GaussianStepTracker(TrackerBase):
 In each prediction round, players must submit **a set of density forecasts.**
 
 A **prediction round** is defined by **one asset, one forecast horizon** and **one or more step resolutions.**
-- A **24-hour horizon** forecast with **{5-minute, 1-hour, 6-hour, 24-hour}** increments is triggered **hourly** for each asset.
-- A **1-hour horizon** forecast with **{1-minute, 5-minute, 15-minute, 30-minute, 1-hour}** increments is triggered **every 12 minutes** for each asset.
+- A **24-hour horizon** forecast
+    - Triggered **hourly** for each asset
+    - Step resolutions: {5-minute, 1-hour, 6-hour, 24-hour}
+    - Supported assets:
+        ```["BTC", "SOL", "ETH", "XAUT", "SPYX", "NVDAX", "TSLAX", "AAPLX", "GOOGLX"]```
+- A **1-hour horizon** forecast
+    - Triggered **every 12 minutes** for each asset
+    - Step resolutions: {1-minute, 5-minute, 15-minute, 30-minute, 1-hour}
+    - Supported assets:
+        ```["BTC", "SOL", "ETH", "XAUT"]```
 
 All required forecasts for a prediction round must be generated within **40 seconds.**
 
