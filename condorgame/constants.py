@@ -4,10 +4,15 @@ Constants used across the condor game package.
 
 # Supported assets
 SUPPORTED_ASSETS = [
-    "BTC",   # BTC/USD
-    "ETH",   # ETH/USD
-    "XAUT",  # XAUT/USD
-    "SOL",   # SOL/USD
+    "BTC",      # BTC/USD
+    "ETH",      # ETH/USD
+    "XAUT",     # XAUT/USD
+    "SOL",      # SOL/USD
+    "SPYX",     # SPYX/USD
+    "NVDAX",    # NVDAX/USD
+    "TSLAX",    # TSLAX/USD
+    "AAPLX",    # AAPLX/USD
+    "GOOGLX",   # GOOGLX/USD
 ]
 
 # ------------------------------------------------------------------
@@ -78,6 +83,12 @@ CRPS_BOUNDS = {
         "SOL": 4,
         "ETH": 80,
         "XAUT": 28,
+
+        "SPYX": 2.4,
+        "NVDAX": 2.3,
+        "TSLAX": 5.4,
+        "AAPLX": 1.7,
+        "GOOGLX": 2.3,
     },
     "num_points": 256
 }
