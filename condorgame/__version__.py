@@ -1,6 +1,6 @@
 __title__ = 'condorgame'
 __description__ = 'A package for participating in the Condor Game on CrunchDAO'
-__version__ = '0.5.2'
+__version__ = '0.5.3'
 __author__ = [
     "Abdennour BOUTRIG",
     "Alexis Gassmann",
