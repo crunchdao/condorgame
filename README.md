@@ -218,7 +218,7 @@ A **prediction round** is defined by **one asset, one forecast horizon** and **o
 All required forecasts for a prediction round must be generated within **40 seconds.**
 
 ## Scoring
-- Once the full horizon has passed, each prediction is scored using a **CRPS scoring function**.
+- Once the full horizon has passed, each prediction is scored using a **[CRPS](https://en.wikipedia.org/wiki/Scoring_rule#:~:text=%5B8%5D-,Continuous%20ranked%20probability%20score,-%5Bedit%5D) scoring function**.
 - A lower **CRPS score** reflects more accurate predictions.
 - Leaderboard ranking is based on a **7-day rolling average** of CRPS scores across **all assets and horizons**, evaluated **relative to other participants**:
   - for each prediction round, the **best CRPS score receives a normalized score of 1**
