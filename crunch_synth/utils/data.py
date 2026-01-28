@@ -2,7 +2,9 @@ from datetime import datetime, timezone, timedelta
 import pandas as pd
 import plotly.graph_objects as go
 
-def load_test_prices_once(assets, pricedb, evaluation_end, days=30):
+from crunch_synth.price_provider import pricedb
+
+def load_test_prices_once(assets, evaluation_end, days=30):
     """
     Load the test price data
 
@@ -25,7 +27,7 @@ def load_test_prices_once(assets, pricedb, evaluation_end, days=30):
     return test_asset_prices
 
 
-def load_initial_price_histories_once(assets, pricedb, evaluation_end, days_history=30, days_offset=30):
+def load_initial_price_histories_once(assets, evaluation_end, days_history=30, days_offset=30):
     """
     Load initial historical data for the tracker (e.g., the 30 days BEFORE the test window)
 
